@@ -1,0 +1,179 @@
+{
+ "_note": "Every model the shipped graphs load. sha256 is filled from the HF LFS pointer by tools/doctor (pending). Licences are the upstream model cards; verify before each release.",
+ "models": [
+  {
+   "file": "wan_animate_2_distill_int8_convrot.safetensors",
+   "dir": "diffusion_models",
+   "used_by": "recast (graph.py)",
+   "source": "https://huggingface.co/Comfy-Org/Wan-Animate-2/blob/main/diffusion_models/wan_animate_2_distill_int8_convrot.safetensors",
+   "upstream": "https://huggingface.co/Wan-AI/Wan2.2-Animate-2-14B",
+   "license": "Apache-2.0",
+   "size_bytes": 16653175528
+  },
+  {
+   "file": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+   "dir": "text_encoders",
+   "used_by": "recast",
+   "source": "https://huggingface.co/Comfy-Org/Wan-Animate-2/blob/main/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+   "upstream": "https://huggingface.co/google/umt5-xxl",
+   "license": "Apache-2.0",
+   "size_bytes": 6735906897
+  },
+  {
+   "file": "clip_vision_h.safetensors",
+   "dir": "clip_vision",
+   "used_by": "recast",
+   "source": "https://huggingface.co/Comfy-Org/Wan-Animate-2/blob/main/clip_vision/clip_vision_h.safetensors",
+   "upstream": "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
+   "license": "MIT",
+   "size_bytes": 1264219396
+  },
+  {
+   "file": "wan_2.1_vae.safetensors",
+   "dir": "vae",
+   "used_by": "recast",
+   "source": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/blob/main/split_files/vae/wan_2.1_vae.safetensors",
+   "upstream": "https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-480P",
+   "license": "Apache-2.0",
+   "size_bytes": null
+  },
+  {
+   "file": "qwen-image-edit-2511-Q4_K_M.gguf",
+   "dir": "diffusion_models",
+   "used_by": "reference matching (reference.py)",
+   "source": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/blob/main/qwen-image-edit-2511-Q4_K_M.gguf",
+   "upstream": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511",
+   "license": "Apache-2.0",
+   "size_bytes": 13244758624
+  },
+  {
+   "file": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+   "dir": "text_encoders",
+   "used_by": "reference matching",
+   "source": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/blob/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+   "upstream": "https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct",
+   "license": "Apache-2.0",
+   "size_bytes": null
+  },
+  {
+   "file": "qwen_image_vae.safetensors",
+   "dir": "vae",
+   "used_by": "reference matching",
+   "source": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/blob/main/split_files/vae/qwen_image_vae.safetensors",
+   "upstream": "https://huggingface.co/Qwen/Qwen-Image",
+   "license": "Apache-2.0",
+   "size_bytes": null
+  },
+  {
+   "file": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+   "dir": "loras",
+   "used_by": "reference matching (quality=fast)",
+   "source": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning",
+   "upstream": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning",
+   "license": "Apache-2.0 (verify model card)",
+   "size_bytes": null
+  },
+  {
+   "file": "face_detection_full_range_sparse.tflite (bundled in the mediapipe wheel)",
+   "dir": "none: ships inside the Python package, runs on the CPU next to the app",
+   "used_by": "character head-and-shoulders crop (recast/crop.py)",
+   "source": "https://pypi.org/project/mediapipe/0.10.21/",
+   "upstream": "https://github.com/google-ai-edge/mediapipe",
+   "license": "Apache-2.0"
+  },
+  {
+   "file": "qwen3vl_8b_int8_convrot.safetensors",
+   "dir": "text_encoders",
+   "used_by": "first-frame description: performers and their poses (recast/describe.py)",
+   "source": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/blob/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+   "upstream": "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct",
+   "license": "Apache-2.0"
+  },
+  {
+   "file": "birefnet.safetensors",
+   "dir": "background_removal",
+   "used_by": "cut-out of character, outfit and product images before the edit (recast/reference.py)",
+   "source": "https://huggingface.co/Comfy-Org/BiRefNet/blob/main/background_removal/birefnet.safetensors",
+   "upstream": "https://github.com/ZhengPeng7/BiRefNet",
+   "license": "MIT",
+   "size_bytes": 444473596,
+   "sha256": "9ab37426bf4de0567af6b5d21b16151357149139362e6e8992021b8ce356a154"
+  },
+  {
+   "file": "SCAIL-2-Q4_K_M.gguf",
+   "dir": "unet",
+   "used_by": "Recast video model, both places (recast/scail.py)",
+   "source": "https://huggingface.co/realrebelai/SCAIL-2_GGUF/blob/main/SCAIL-2-Q4_K_M.gguf",
+   "upstream": "https://huggingface.co/zai-org/SCAIL-2",
+   "license": "MIT",
+   "size_bytes": 10862812832,
+   "sha256": "ced59d192230b56990c7cb2ce905ae72cac08f564639f6198edff57e035f2646"
+  },
+  {
+   "file": "wan2.1_SCAIL_2_DPO_lora_bf16.safetensors",
+   "dir": "loras",
+   "used_by": "Recast (recast/scail.py)",
+   "source": "https://huggingface.co/Comfy-Org/SCAIL-2/blob/main/loras/wan2.1_SCAIL_2_DPO_lora_bf16.safetensors",
+   "upstream": "https://huggingface.co/zai-org/SCAIL-2",
+   "license": "MIT",
+   "size_bytes": 1226936552,
+   "sha256": "b106522036f64e50f5f8ae3b808973515ff442cc2fac27b65d875eafb95b89e2"
+  },
+  {
+   "file": "sam3.1_multiplex_fp16.safetensors",
+   "dir": "checkpoints",
+   "used_by": "tracking the clip's performers and the characters for Recast (recast/scail.py)",
+   "source": "https://huggingface.co/Comfy-Org/sam3.1/blob/main/checkpoints/sam3.1_multiplex_fp16.safetensors",
+   "upstream": "https://huggingface.co/facebook/sam3.1",
+   "license": "SAM License (Meta, custom; check terms)",
+   "size_bytes": 1745546848,
+   "sha256": "9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03"
+  },
+  {
+   "file": "Wan2.1_14B_VACE-Q4_K_S.gguf",
+   "dir": "unet",
+   "used_by": "Restyle, video to video (recast/vace.py)",
+   "source": "https://huggingface.co/QuantStack/Wan2.1_14B_VACE-GGUF/blob/main/Wan2.1_14B_VACE-Q4_K_S.gguf",
+   "upstream": "https://huggingface.co/Wan-AI/Wan2.1-VACE-14B",
+   "license": "Apache-2.0",
+   "size_bytes": 10552539040,
+   "sha256": "4ffac58131d2dd6c0508783488ed43df801f1514c5438ecfa4c625da8573b25e"
+  },
+  {
+   "file": "Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors",
+   "dir": "loras",
+   "used_by": "Restyle speed-up (recast/vace.py); replaces CausVid, which is CC-BY-NC-4.0",
+   "source": "https://huggingface.co/lightx2v/Wan2.1-T2V-14B-StepDistill-CfgDistill-Lightx2v/blob/main/loras/Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors",
+   "upstream": "https://huggingface.co/lightx2v/Wan2.1-T2V-14B-StepDistill-CfgDistill",
+   "license": "Apache-2.0",
+   "size_bytes": 631344264,
+   "sha256": "1c918df9eaa102766d8f99104209ce55fe7a892278a667a63d721c5d1c18efb1"
+  },
+  {
+   "file": "depth_anything_v2_vits.pth",
+   "dir": "custom_nodes/comfyui_controlnet_aux/ckpts/depth-anything/Depth-Anything-V2-Small",
+   "used_by": "Restyle control video (recast/vace.py); the node downloads it on first use, so place it in images",
+   "source": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small/blob/main/depth_anything_v2_vits.pth",
+   "upstream": "https://github.com/DepthAnything/Depth-Anything-V2",
+   "license": "Apache-2.0 (Small only; Base/Large are CC-BY-NC-4.0)",
+   "size_bytes": 99218434,
+   "sha256": "715fade13be8f229f8a70cc02066f656f2423a59effd0579197bbf57860e1378"
+  }
+ ],
+ "custom_nodes": [
+  {
+   "name": "ComfyUI-VideoHelperSuite",
+   "repo": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite",
+   "license": "GPL-3.0",
+   "commit": null,
+   "used_for": "VHS_LoadVideo (bounded-RAM decode)"
+  },
+  {
+   "name": "ComfyUI-GGUF",
+   "repo": "https://github.com/city96/ComfyUI-GGUF",
+   "license": "Apache-2.0",
+   "commit": null,
+   "used_for": "UnetLoaderGGUF"
+  }
+ ]
+}

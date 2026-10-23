@@ -1,0 +1,4 @@
+{"ref": "ref.png", "video": "drive.mp4", "width": 480, "height": 832, "fps": 16, "segments": 3,
+ "prompt": "Character appearance description: A realistic fat pale ginger tabby cat with bold orange stripes, green eyes, a pink nose and an orange striped tail, standing upright on its hind legs on a glossy walnut-wood kitchen slab.\nBackground description: A warm, cosy traditional kitchen in soft evening light with sage-green glass-front upper cabinets, a copper range hood, a terracotta tile backsplash, a gas stove with a dark oven, and a white bowl of oranges on the wooden slab at the left.",
+ "pose_prompt": "A cat standing upright on its hind legs on a kitchen counter dances, raising and waving its front paws, swaying its hips, turning around and stepping from foot to foot.",
+ "prefix": "recast/dance"}

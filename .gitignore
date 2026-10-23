@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# renders, uploads and private test media never enter git
+bench/runs/
+runs/
+*.mp4
+*.mov
+*.wav
+# box-specific originals kept for reference only
+tools/_box_reference/
+.env
+# internal notes, private test drivers, anything about our machines or budget
+private/
+
+# web build output and dependencies
+node_modules/
+web/dist/
+*.tsbuildinfo

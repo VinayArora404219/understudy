@@ -1,0 +1,215 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { api } from "../api/client";
+import type { Job, JobProgress } from "../api/types";
+import { CompareSlider } from "../components/CompareSlider";
+import { aspectOf, Button, Card, cx, formatEta, Pill, Spinner } from "../components/ui";
+import { PreviewStep } from "./CreatePage";
+
+const ACTIVE = new Set(["queued", "rendering", "finishing", "matching"]);
+
+/** Before approval (or after a failed preview, which costs nothing) the job is still a preview. */
+const isPreview = (j: Job) =>
+  ["draft", "matching", "awaiting_approval"].includes(j.state) || (j.state === "failed" && !j.error?.refunded && !j.result);
+
+export function JobPage() {
+  const { id = "" } = useParams();
+  const nav = useNavigate();
+  const { data: job, isLoading, error } = useQuery({
+    queryKey: ["job", id], queryFn: () => api.job(id),
+    refetchInterval: (q) => (q.state.data && ACTIVE.has(q.state.data.state) ? 1500 : false),
+  });
+  if (isLoading) return <div className="skeleton mx-auto aspect-[9/16] max-w-sm rounded-[var(--radius-card)]" />;
+  if (error || !job) {
+    return <Empty title="We can't find this render" line={(error as Error)?.message ?? "It may belong to another link."} />;
+  }
+  return (
+    <div>
+      <div className="mb-8 flex flex-wrap items-center gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">{job.title}</h1>
+        <StatePill job={job} />
+      </div>
+      {isPreview(job) ? <PreviewStep job={job} onBack={() => nav("/create")} backLabel="Start a new one" />
+        : job.state === "done" && job.result ? <Result job={job} />
+        : job.state === "failed" || job.state === "cancelled" ? <Failed job={job} />
+        : <InProgress job={job} />}
+    </div>
+  );
+}
+
+function StatePill({ job }: { job: Job }) {
+  if (job.state === "done") return <Pill tone="ok">Ready</Pill>;
+  if (job.state === "failed") return <Pill tone="bad">Didn't finish</Pill>;
+  if (job.state === "cancelled") return <Pill>Cancelled</Pill>;
+  if (job.state === "awaiting_approval") return <Pill tone="warn">Waiting for your approval</Pill>;
+  if (job.state === "draft") return <Pill>Not started</Pill>;
+  if (job.state === "matching") return <Pill tone="accent"><Spinner className="h-3 w-3" /> Building preview</Pill>;
+  return <Pill tone="accent"><Spinner className="h-3 w-3" /> In progress</Pill>;
+}
+
+const STAGES: [JobProgress["stage"], string][] = [
+  ["waiting_for_gpu", "Waiting for a GPU"],
+  ["starting_gpu", "Starting the GPU"],
+  ["loading_models", "Loading the models"],
+  ["rendering", "Rendering your video"],
+  ["finishing", "Adding your audio and finishing"],
+];
+
+function InProgress({ job }: { job: Job }) {
+  const qc = useQueryClient();
+  const cancel = useMutation({ mutationFn: () => api.cancel(job.id), onSuccess: () => {
+    qc.invalidateQueries({ queryKey: ["job", job.id] });
+    qc.invalidateQueries({ queryKey: ["session"] });
+  } });
+  const p = job.progress;
+  const current = p ? STAGES.findIndex(([s]) => s === p.stage) : 0;
+  return (
+    <div className="grid gap-8 lg:grid-cols-[minmax(0,380px)_1fr]">
+      <div className="relative self-start overflow-hidden rounded-[var(--radius-card)] border border-ink-700" style={aspectOf(job.aspect)}>
+        {job.preview?.reference_url && <img src={job.preview.reference_url} alt="Starting frame" className="h-full w-full object-cover opacity-60" />}
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-5 text-sm">This is where your video starts.</div>
+      </div>
+      <Card className="self-start p-6">
+        <ol className="space-y-4">
+          {STAGES.map(([s, label], i) => (
+            <li key={s} className="flex items-center gap-3 text-sm">
+              <span className={cx("grid h-6 w-6 place-items-center rounded-full text-[11px] font-semibold",
+                i < current && "bg-accent text-accent-ink", i === current && "bg-ink-100 text-ink-950", i > current && "bg-ink-800 text-ink-500")}>
+                {i < current ? "✓" : i === current ? <Spinner className="h-3 w-3" /> : i + 1}
+              </span>
+              <span className={i === current ? "text-ink-100" : i < current ? "text-ink-300" : "text-ink-500"}>
+                {label}
+                {i === current && s === "waiting_for_gpu" && p?.queue_position ? ` · ${p.queue_position} ahead of you` : ""}
+                {i === current && s === "rendering" && p?.step ? ` · step ${p.step} of ${p.steps}` : ""}
+              </span>
+            </li>
+          ))}
+        </ol>
+        {p?.stage === "rendering" && p.step && p.steps && (
+          <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-ink-800">
+            <div className="h-full rounded-full bg-accent transition-[width] duration-700" style={{ width: `${(p.step / p.steps) * 100}%` }} />
+          </div>
+        )}
+        <p className="mt-6 text-sm text-ink-300">
+          {p?.eta_seconds !== undefined ? `Ready in ${formatEta(p.eta_seconds)}.` : "Starting…"}{" "}
+          You can close this tab; it will be waiting in <Link to="/library" className="text-accent hover:underline">My renders</Link>.
+        </p>
+        <div className="mt-6 flex justify-end">
+          <Button variant="danger" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate()}>Cancel and refund</Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function Result({ job }: { job: Job }) {
+  const r = job.result!;
+  const [view, setView] = useState<"compare" | "result" | "side">("compare");
+  const [w, h] = job.aspect ?? [9, 16];
+  // the player is as large as the screen allows in the video's own shape; nothing is cropped
+  const fit = { width: `min(100%, calc(70vh * ${w} / ${h}))` };
+  const pill = "inline-flex h-11 items-center rounded-[var(--radius-control)] border border-ink-700 bg-ink-800 px-4";
+  return (
+    <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+      <div className="relative overflow-hidden rounded-[var(--radius-card)] border border-ink-700 bg-ink-950 p-4 sm:p-6">
+        {job.preview?.reference_url && (  // the video's own colours behind it, instead of empty bars
+          <img src={job.preview.reference_url} alt="" aria-hidden
+            className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-40 blur-3xl" />
+        )}
+        <div className="relative mb-4 flex justify-center">
+          <div className="inline-flex rounded-[var(--radius-control)] bg-ink-900/80 p-1 text-sm backdrop-blur">
+            {([["compare", "Before / after"], ["result", "Result"], ["side", "Side by side"]] as const).map(([k, l]) => (
+              <button key={k} onClick={() => setView(k)} className={cx("rounded-[10px] px-3.5 py-2",
+                view === k ? "bg-ink-700 text-ink-100" : "text-ink-300 hover:text-ink-100")}>{l}</button>
+            ))}
+          </div>
+        </div>
+        <div className="relative mx-auto" style={view === "side" ? undefined : fit}>
+          {view === "compare"
+            ? <CompareSlider before={r.source_url} after={r.video_url} poster={job.preview?.reference_url}
+                beforePoster={job.preview?.frame_url} aspect={job.aspect} />
+            : <video key={view} src={view === "side" ? r.compare_url : r.video_url} poster={job.preview?.reference_url}
+                controls autoPlay loop playsInline className="max-h-[70vh] w-full rounded-[var(--radius-card)] bg-ink-900 object-contain"
+                style={view === "side" ? undefined : aspectOf(job.aspect)} />}
+        </div>
+        {api.isMock && <p className="relative mt-3 text-center text-xs text-warn">Preview build: this is your own clip played back, not a render.</p>}
+      </div>
+
+      <aside className="space-y-4">
+        {!!job.inputs?.length && (
+          <Card className="p-5">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-500">Input assets</h2>
+            <div className="mt-3 flex flex-wrap gap-3">
+              {job.inputs.map((x, i) => (
+                <figure key={i} className="w-[72px]">
+                  <img src={x.thumb_url} alt={x.label} className="h-[72px] w-[72px] rounded-xl border border-ink-700 object-cover" />
+                  <figcaption className="mt-1 truncate text-center text-[11px] text-ink-500">{x.label}</figcaption>
+                </figure>
+              ))}
+            </div>
+          </Card>
+        )}
+        <Card className="p-5">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-500">Details</h2>
+          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2.5 text-sm">
+            <dt className="text-ink-500">Rendered at</dt><dd>{r.native_resolution}</dd>
+            <dt className="text-ink-500">Delivered at</dt><dd>{r.delivered_resolution}</dd>
+            <dt className="text-ink-500">Render time</dt><dd>{Math.round(r.render_seconds / 60)} min</dd>
+            <dt className="text-ink-500">Models</dt><dd>{r.models ?? "Wan Animate-2, Qwen-Image-Edit-2511"}</dd>
+            <dt className="text-ink-500">Seed</dt><dd className="font-mono">{job.preview?.seed ?? "—"}</dd>
+          </dl>
+          <p className="mt-4 text-xs text-ink-500">AI-generated, open weights. The recipe reproduces this exact video.</p>
+        </Card>
+        <a href={r.video_url} download className="flex h-12 w-full items-center justify-center rounded-[var(--radius-control)] bg-accent font-medium text-accent-ink hover:brightness-105">
+          Download video
+        </a>
+        <div className="flex flex-wrap gap-3">
+          <a href={r.compare_url} download className={pill}>Side by side</a>
+          <a href={r.recipe_url} download="recipe.json" className={pill}>Recipe</a>
+          <Link to="/create" className={pill}>Make another</Link>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function Failed({ job }: { job: Job }) {
+  const qc = useQueryClient();
+  // a refunded render keeps its approved preview: run it again without redoing the setup
+  const again = useMutation({ mutationFn: () => api.approve(job.id), onSuccess: () => {
+    qc.invalidateQueries({ queryKey: ["job", job.id] });
+    qc.invalidateQueries({ queryKey: ["jobs"] });
+    qc.invalidateQueries({ queryKey: ["session"] });
+  } });
+  const rerun = !!job.error?.refunded && !!job.preview;
+  const button = "mt-6 inline-flex h-11 items-center rounded-[var(--radius-control)] px-4 font-medium";
+  return (
+    <Card className="max-w-xl p-6">
+      <p className="text-ink-100">{job.error?.message ?? "This render didn't finish."}</p>
+      {job.error?.refunded && <p className="mt-2 text-sm text-ok">Your render was refunded.</p>}
+      {again.isError && <p className="mt-2 text-sm text-bad">{(again.error as Error).message}</p>}
+      <div className="flex flex-wrap gap-3">
+        {rerun && (
+          <button onClick={() => again.mutate()} disabled={again.isPending}
+            className={cx(button, "bg-accent text-accent-ink disabled:opacity-60")}>
+            {again.isPending ? "Starting…" : "Render again"}
+          </button>
+        )}
+        <Link to="/create" className={cx(button, rerun ? "border border-ink-700 text-ink-100" : "bg-accent text-accent-ink")}>
+          {rerun ? "Start over" : "Try again"}
+        </Link>
+      </div>
+    </Card>
+  );
+}
+
+export function Empty({ title, line, action }: { title: string; line: string; action?: React.ReactNode }) {
+  return (
+    <div className="mx-auto max-w-md py-16 text-center">
+      <h1 className="text-xl font-semibold">{title}</h1>
+      <p className="mt-2 text-ink-300">{line}</p>
+      {action && <div className="mt-6">{action}</div>}
+    </div>
+  );
+}

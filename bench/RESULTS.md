@@ -1,0 +1,202 @@
+# Measured results
+
+Every claim in the README traces to a row here. Timings come from `bench/log.tsv` (one row was hand-corrected and is annotated there), written by
+`tools/gpu_bench.sh`. Hardware: RTX 4070 Ti SUPER 16 GB, 32 GB RAM, ComfyUI 0.41.3, executed through
+comfy-sdk 0.5.0 → comfy-api-proxy 0.1.6.
+
+Test clips used so far are **private test material**. They are not redistributable, so no frames
+or outputs from them are published. Public examples will come only from cleared clips, with
+provenance listed in `examples/`.
+
+- **Clip A:** a single animal performer on a static camera, full body, 5 s used.
+- **Clip B:** a single human performer, waist-up, with changing coloured stage light.
+- **Clip C:** two animal performers side by side at a table (a dog on the left, a cat on the right),
+  static camera, with black bars baked into the frame.
+
+## Animate-2 recast (1 segment = 81 frames, 480×832, 16 fps, 10 steps)
+
+| Run | Reference | Wall time | Peak VRAM | Finding |
+|---|---|---:|---:|---|
+| t1 | matched to the first frame (pose, framing, room) | 552 s | 15,776 MB | Full body kept, pose tracked through arms-up and turn, stable background |
+| t4 | same as t1, second seed | 474 s | 15,128 MB | Same framing as t1; motion blur on the fast spin in both seeds |
+| t2 | character image used as-is (seated, close framing) | 620 s | 14,584 MB | Inherits the reference's framing: subject too large, grows toward camera, cropped by the end; background from the reference, not the clip |
+| t3 | auto-matched (v1 prompt) | 593 s | 14,680 MB | Room carried from the clip ✓, identity from the character ✓, **pose copied from the character image ✗** |
+
+**Conclusion so far:** the reference's agreement with the first frame decides output framing.
+Matching it automatically is the product's core job.
+
+## Reference matching (Qwen-Image-Edit-2511, first frame = image 1, character = image 2)
+
+| Variant | Result |
+|---|---|
+| v1 prompt, "same pose, same camera" | pose taken from the character image |
+| v2 prompt, "pose, size and position from the first picture; second picture only for its look", 4-step | still the character image's pose |
+| v2 prompt, 20 steps / cfg 3 | still the character image's pose |
+| A. v2 + explicit pose words ("stands upright on its hind legs, front paws at its chest"), 4-step | **upright, source size ✓** |
+| B. v2, denoise 0.88, 4-step | still the character image's pose ✗ |
+| C. v2, character image cropped to head and shoulders, 4-step | **upright, source size, identity kept ✓** |
+
+Finding: **with Qwen-Image-Edit-2511, a full-body character image's pose beats an abstract
+instruction ("take the first picture's pose").** It loses to either a *concrete* pose description
+(A) or to removing the body from the character image (C). C needs no description of the clip,
+so it is the candidate default. A needs the first frame's pose put into words automatically
+(e.g. from detected keypoints).
+
+## Restyle (style only, no character; Clip A)
+
+| Run | Style | Render | Finding |
+|---|---|---:|---|
+| t5_restyle_anime | Anime Cel | 553 s | Clean ink lines and cel shading hold on every sampled frame; pose tracked through arms-up and turn; room restyled consistently. Demo-grade |
+| t5_restyle_clay | Clay Stop-Motion (v1 wording) | 785 s | Look reads as smooth clay; **an invented green hand-held object enters bottom-left in frames ~20-40 (absent from the source)** |
+| t6_restyle_clay_v2 | Clay, reworded to materials only | 569 s | Bottle gone, but **an invented pompom-like object appears at the same spot and time** (frames ~15-35), where the paw kicks. The source corner is empty |
+
+Finding: restyle works through Animate-2 (anime clean). The clay look **invents a small prop near fast limb motion in both wordings**, so the wording was not the cause (an earlier note here said it was; corrected). **Clay is removed from the style list for now** (decision 2026-10-20); the open question stays here.
+
+## Human performer (Clip B: waist-up, changing coloured stage light)
+
+| Run | Change | Render | Finding |
+|---|---|---:|---|
+| h1b | Anime Cel restyle | 687 s | Clean ink-and-cel look on every sampled frame; hand-to-head, arm raise and back arch all tracked; the shifting stage light became a consistent painted light-ray backdrop |
+| h2b | Toy Figure 3D restyle | 538 s | Glossy vinyl figure in an invented toy-room set; pose tracked through the back arch; set stays consistent |
+| h3b | Character: white cat (head-only crop, fix C) | 543 s | Cross-species works: the cat raises a paw and arches, following the arm raise and back arch. **The reference was drawn full-body although the clip is waist-up**, because the prompt says "whole body in frame". That clause must follow the clip's framing |
+
+Finding: both restyles and the cross-species recast work on a human clip under hard, changing light.
+
+## Multiple references (Clip B first frame; references generated with Qwen-Image; `bench/experiments/multiref.py`)
+
+Animate-2 takes one reference still, so references are merged into it with Qwen-Edit, which has three
+image slots (first frame + two). Character = head-and-shoulders portrait, outfit = red jacket,
+product = green bottle. 4-step, seed 1.
+
+| Variant | Jacket | Bottle | Pose kept | Note |
+|---|---|---|---|---|
+| V1 frame + character + jacket | ✓ details kept | — | ✓ | baseline |
+| **V2 frame + character + board(jacket \| bottle)** | ✓ | ✓ held, label kept | ✓ | **best: 3 references, one pass** |
+| V3 two passes (V1, then + bottle) | ✓ | ✓ | ✓ | same result, double time, extra edit hop |
+| V4 frame + board(character \| jacket \| bottle) | ✓ | ✓ | ✗ head turns to camera | face closer to the portrait, pose lost |
+
+Finding: give the character its own slot and put the extras on one labelled board. Board capacity beyond
+two items is still to be measured.
+
+**Through Animate-2** (`mr_v2_render`: V2 reference, Clip B, 460 s, 13,720 MB): the jacket holds on every
+sampled frame (zips, colour, fit) and identity stays consistent. **The held bottle is lost once its hand
+leaves the frame** (present at frames 0 and 16, gone from 32 on, never returns). It vanishes rather than
+morphing. Product rule: worn items (outfit, hat, glasses) are reliable; held props only when the holding
+hand stays in shot. The UI says so at upload.
+
+**Cause, found by review:** the V2 reference put the bottle in a raised hand at chest height, a pose the
+performer never makes; her real arm hangs down and leaves the frame. Placement must follow the
+performer's actual hand:
+
+| Variant | Bottle placement | Rest of pose | Note |
+|---|---|---|---|
+| V5: "that hand at the hip holds the bottle" + abstract "take her pose" | ✓ low by the thigh | ✗ stands straight, faces camera | the hand instruction pushed out the abstract pose instruction |
+| V5b: whole pose spelled out concretely (frame-relative) + low-hand bottle | ✓ | ✓ hand on head, head back, leaning | concrete pose words again beat abstract ones (cf. fix A) |
+
+**Through Animate-2** (`mr_v5b_render`, 413 s, 13,592 MB): the bottle is visible in 5 of 6 sampled
+frames (0, 16, 32, 48, 80; 2 of 6 for V2), and it **returns** after its hand dips out of shot around
+frame 64. Jacket and identity hold. Minor: a small invented grey ledge at the bottom-left in a few frames.
+
+Product implication: prop placement needs the first frame's pose **in words**. That means a pose
+description generated from detected keypoints, which also makes fix A automatic.
+
+## Swap: one thing changes, the performer stays (Clip B; through the app)
+
+| Swap | Result |
+|---|---|
+| Outfit: red leather jacket, pose words read automatically | **jacket fitted and detailed, pose and stage light exactly kept** |
+| Product: green bottle, "in one hand" (no side known) | bottle clear, but the edit **re-posed her**: the hand on her head moved to the other arm |
+| Product: side asked of the vision model | the model answered body-relative (mirrored: it called the raised arm the one on the picture's right). Sides now come from MediaPipe Pose keypoints (`recast/pose.py`) |
+| Product: both arms named by picture side, from keypoints | **pose exactly kept, bottle in the free hand at the hip**. The words "beside the thigh" bared a thigh, so they now read "hanging down at the side" |
+
+Also found: a re-run with changed words but the same seed reattached to the earlier job and showed
+its old image. Submissions are now keyed by the graph's content, in the app and the CLI.
+
+## Two performers (Clip C; `bench/experiments/duo.py`)
+
+Each animal is replaced by its own character: the man (character 1) for the performer on the
+picture's left, the woman (character 2) for the one on its right. Both character images were
+cropped to head and shoulders (fix C), and each performer's pose was written out by picture side
+(fix A). Directions in the prompt refer to the picture, never to a performer's own left or right.
+
+| Step | Result |
+|---|---|
+| Reference, seed 1 (4-step) | **both identities correct, each in its animal's place and pose; the clip's studio, keyboard and laptop kept** |
+| Reference, seed 2 (4-step) | both people correct, but character 1's own background (a TV studio) leaked in |
+| Render of seed 1, 5 s (389 s, 13,944 MB) | the two stay distinct on every sampled frame, with no identity swap or merge. Head turns, the lean in and the hand on the keyboard all follow; character 2's hand raise is smaller than the cat's paw raise |
+| Through the app: automatic head crops (`recast/crop.py`), **no pose words**, seed 1 | both identities and the clip's studio kept, but the poses weaken: both stand facing the camera, and only the left character's hand stays on the keyboard. **Pose words carry the duo's pose** |
+| Through the app with **pose words read automatically** from the first frame (`recast/describe.py`, Qwen3-VL-8B via core TextGenerate, about 1 min) | read as "dog on the left: leans forward, head down, both hands on the keyboard; cat on the right: sits upright, one hand raised near the laptop". The reference matches the hand-written-pose version: the left character leans over the keyboard with both hands on it, and the right one raises a hand with the other on the laptop. **Fix A is now automatic** |
+
+Finding: **two performers work with the open stack**: three Qwen-Edit image slots (frame, plus one per
+character) and one Animate-2 reference that holds both. A seed can still leak a character
+image's background, so the free re-roll before rendering is part of the method. Three or more
+performers would need a shared reference board and are untested.
+
+## Robustness fixes found by the runs
+
+- **Silent clips failed** (first Clip B runs): VideoHelperSuite's loader errors when a clip has no
+  audio stream. `media.normalize` now gives every clip an audio track (digital silence if needed).
+- **Uploads collided by name**: every run uploaded `drive.mp4`, and ComfyUI renamed the duplicates.
+  Inputs are now named by content hash.
+- **Failed jobs were swallowed**: the CLI showed only "ended failed". `RenderFailed` now carries the
+  server's one-line reason, and a re-run after a failure resubmits instead of reattaching to the
+  dead job.
+- **Baked-in black bars** (Clip C): a letterboxed clip passed its bars into the reference, and the
+  "portrait" shape was the frame's, not the picture's. `media.content_box` now finds the picture
+  (cropdetect, with a box that only grows across sampled frames), and the clip is cropped to it
+  before anything else.
+
+## Integration notes
+
+- comfy-sdk 0.5.0 sends job `metadata` as a map, while comfy-api-proxy 0.1.6 accepts only a string and
+  rejects the job. We submit without metadata (reported upstream: pending).
+- Proxy asset uploads land in ComfyUI's input directory under plain filenames, so
+  VideoHelperSuite's loader reads them unchanged.
+- `recast/graph.py` reproduces, node for node, a 3-segment graph that rendered successfully before
+  this project (`tests/test_graph.py::test_port_matches_a_graph_that_rendered`).
+
+## SCAIL-2: one engine for both places (2026-10-20/21)
+
+Clip C (two animals at a keyboard and a laptop, white studio, a cut at ~3.5 s), two character photos
+taken in busy studios, 5 s, 16 fps. Script: `bench/experiments/scail.py`; app: `recast/scail.py`.
+
+| Run | Mode | Size / weights | Time | Peak VRAM | Result |
+|---|---|---|---|---|---|
+| replace_v1 (Wan2.2-Animate, human clip) | replacement | 480x832 Q3 | 565 s | 13.8 GB | room kept; DWPose needs a human body, so animals can't drive it |
+| scail_v1 | replacement | 640 Q4_K_M | 851 s | 11.9 GB | both characters in the clip's room, props kept, nothing from their photos; left→right matching right; motion follows by meaning, across the cut |
+| scail_v2 | replacement | 704 Q6_K | 681 s | 11.5 GB | near-identical to v1 (same seed); slightly sharper logos. Size and quant are not the identity lever |
+| scail_anim_b | animation | 640 Q4_K_M | 497 s | 10.8 GB | both characters in the left character's studio (start still), same performance |
+
+- **Start still for another place (duo):** without a one-scene opening sentence, Qwen-Image-Edit returned a
+  split-screen diptych (one panel per character picture) twice in two tries. Opening with "One single
+  photograph of one continuous scene…" fixed it on the next two tries.
+- **Props:** carrying the clip's objects into another place works when named as words, but was rejected as a
+  product rule: another place keeps its own things. The clip reader now also writes `body`, the pose
+  without objects, for that case.
+- **Open:** one character's likeness drifts younger in every run, both modes and both sizes; logos turn into
+  invented text; the white backdrop renders greyish.
+
+## Restyle by video-to-video (2026-10-21)
+
+A street clip (selfie start, step back, sunglasses taken out at ~3 s and put on, a car driving off at ~1 s),
+anime look, 480x832, 16 fps. Animate-2's Restyle animates one restyled first frame. Scripts:
+`bench/experiments/vace_restyle.py` (controls), `bench/experiments/vace_chunks.py` (app engine, `recast/vace.py`).
+
+| Run | Control | Speed LoRA | Prompt | Time | Glasses | Car leaves |
+|---|---|---|---|---|---|---|
+| Animate-2 (app before) | one still | — | look only | ~5 min / 10 s | never | stays parked |
+| vace_canny (5 s) | Canny | CausVid 0.3, 4 steps (template) | events named | 307 s | black smear | yes |
+| vace_canny_v2 (5 s) | Canny | CausVid 1.0, 6 steps | events named | 239 s | on time, one smudgy frame | yes |
+| vace_depth_v2 (5 s) | depth | CausVid 1.0, 6 steps | events named | 205 s | on time, clean | yes |
+| vace_10s (2 chunks) | depth | CausVid 1.0, 6 steps | who and where only | 443 s | **never** | yes |
+| vace_10s_reader (2 chunks) | depth | lightx2v T2V distill 1.0, 6 steps | clip reader, 4 moments | 583 s | on and off on time | yes |
+
+- **Chunk joins:** anchoring each chunk on the previous chunk's last 9 frames (control mask 0) left no
+  visible jump or colour shift at the join.
+- **Depth can't see small things against the body.** With a prompt that didn't name them, sunglasses put on
+  mid-clip never appeared. The clip reader now reads a 2x2 sheet of four moments and names what a performer
+  puts on, takes off or picks up.
+- **Background events must not be named.** The reader's first line mentioned a cyclist passing at the very
+  end, far away; VACE drew one large in the foreground at 4 s. The reader now leaves background motion out.
+- **Licenses:** the template's CausVid 14B LoRA is CC-BY-NC-4.0; replaced by lightx2v's Apache-2.0 T2V
+  distill LoRA with no visible loss. Depth Anything V2 Small is Apache-2.0 (Base and Large are not).
