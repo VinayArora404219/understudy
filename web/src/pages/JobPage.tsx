@@ -67,7 +67,9 @@ function InProgress({ job }: { job: Job }) {
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,380px)_1fr]">
       <div className="relative self-start overflow-hidden rounded-[var(--radius-card)] border border-ink-700" style={aspectOf(job.aspect)}>
-        {job.preview?.reference_url && <img src={job.preview.reference_url} alt="Starting frame" className="h-full w-full object-cover opacity-60" />}
+        {job.preview?.first_url
+          ? <video src={job.preview.first_url} poster={job.preview.first_frame_url} autoPlay loop muted playsInline aria-label="The start of your video" className="h-full w-full object-cover opacity-60" />
+          : job.preview?.reference_url && <img src={job.preview.reference_url} alt="Starting frame" className="h-full w-full object-cover opacity-60" />}
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-5 text-sm">This is where your video starts.</div>
       </div>
       <Card className="self-start p-6">
@@ -110,11 +112,12 @@ function Result({ job }: { job: Job }) {
   // the player is as large as the screen allows in the video's own shape; nothing is cropped
   const fit = { width: `min(100%, calc(70vh * ${w} / ${h}))` };
   const pill = "inline-flex h-11 items-center rounded-[var(--radius-control)] border border-ink-700 bg-ink-800 px-4";
+  const poster = job.preview?.first_frame_url ?? job.preview?.reference_url;
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
       <div className="relative overflow-hidden rounded-[var(--radius-card)] border border-ink-700 bg-ink-950 p-4 sm:p-6">
-        {job.preview?.reference_url && (  // the video's own colours behind it, instead of empty bars
-          <img src={job.preview.reference_url} alt="" aria-hidden
+        {poster && (  // the video's own colours behind it, instead of empty bars
+          <img src={poster} alt="" aria-hidden
             className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-40 blur-3xl" />
         )}
         <div className="relative mb-4 flex justify-center">
@@ -127,9 +130,9 @@ function Result({ job }: { job: Job }) {
         </div>
         <div className="relative mx-auto" style={view === "side" ? undefined : fit}>
           {view === "compare"
-            ? <CompareSlider before={r.source_url} after={r.video_url} poster={job.preview?.reference_url}
+            ? <CompareSlider before={r.source_url} after={r.video_url} poster={poster}
                 beforePoster={job.preview?.frame_url} aspect={job.aspect} />
-            : <video key={view} src={view === "side" ? r.compare_url : r.video_url} poster={job.preview?.reference_url}
+            : <video key={view} src={view === "side" ? r.compare_url : r.video_url} poster={poster}
                 controls autoPlay loop playsInline className="max-h-[70vh] w-full rounded-[var(--radius-card)] bg-ink-900 object-contain"
                 style={view === "side" ? undefined : aspectOf(job.aspect)} />}
         </div>

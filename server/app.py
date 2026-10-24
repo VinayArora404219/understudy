@@ -2,8 +2,8 @@
 
 Speaks the API the web app expects (web/src/api/types.ts) on top of the
 recast package. Previews (Qwen-Edit) and renders (Animate-2) go through the
-Comfy SDK to the comfy-api-proxy named by COMFY_BASE_URL, one at a time, in
-the order asked. State is plain files under RECAST_DATA (default runs/app),
+Comfy SDK to the comfy-api-proxy named by COMFY_BASE_URL, one at a time per lane
+(see LANES), in the order asked. State is plain files under RECAST_DATA (default runs/app),
 so a restart keeps the library and a render that was running reattaches
 instead of rendering twice.
 
@@ -60,7 +60,15 @@ class UserError(ValueError):
 LOCK = threading.RLock()
 UPLOADS: dict[str, dict[str, Any]] = {}
 JOBS: dict[str, dict[str, Any]] = {}
-TASKS: "queue.Queue[tuple[str, str, Any]]" = queue.Queue()
+# Two GPU lanes, each one task at a time in order: "quick" finds people, reads pictures and clips and draws
+# image-edit previews (seconds to a minute); "heavy" renders, including the clip's-place preview, which is a
+# real render (minutes). Each lane has its own endpoint when COMFY_QUICK_BASE_URL is set (the judge build: two
+# Modal GPUs); otherwise both share COMFY_BASE_URL, and a quick task still runs right after the GPU job in
+# progress instead of behind every queued render.
+LANES = ("quick", "heavy")
+QUEUES: "dict[str, queue.Queue[tuple[str, str, Any]]]" = {lane: queue.Queue() for lane in LANES}
+_LANE = threading.local()  # the lane the current worker thread serves
+_ENV_LOCK = threading.Lock()
 RUNNING: dict[str, Any] = {}  # job id -> the SDK job currently on the GPU for it (for cancel)
 
 
@@ -142,7 +150,7 @@ def _load() -> None:
         if j["state"] == "matching":  # a preview is cheap; ask again rather than resume
             _update(j, state="failed", error={"message": "The preview was interrupted. Try again.", "refunded": False})
         elif j["state"] in ("queued", "rendering", "finishing"):
-            TASKS.put(("render", j["id"], None))  # the stored submission reattaches to the GPU job
+            _enqueue("render", j["id"], None)  # the stored submission reattaches to the GPU job
 
 
 # ------------------------------------------------------------------ pipeline
@@ -302,9 +310,46 @@ def _summary(p: dict) -> str:
     return ", ".join(parts) + "."
 
 
-def _comfy():
+def _endpoint(lane: str) -> tuple[str, str | None]:
+    """(base URL, API key) of a lane's comfy-api-proxy."""
+    main = os.environ.get("COMFY_BASE_URL", ""), os.environ.get("COMFY_API_KEY") or None
+    if lane == "quick" and os.environ.get("COMFY_QUICK_BASE_URL", "").strip():
+        return os.environ["COMFY_QUICK_BASE_URL"].strip(), os.environ.get("COMFY_QUICK_API_KEY") or main[1]
+    return main
+
+
+def _comfy(lane: str | None = None):
+    """An SDK client for this worker's lane (or `lane`). The SDK reads its endpoint only from COMFY_BASE_URL
+    when a client is built, so clients are built one at a time with it pointing at the lane."""
     from comfy_sdk import Comfy
-    return Comfy(timeout=120)
+
+    url, key = _endpoint(lane or getattr(_LANE, "name", "heavy"))
+    with _ENV_LOCK:
+        before = os.environ.get("COMFY_BASE_URL")
+        os.environ["COMFY_BASE_URL"] = url
+        try:
+            return Comfy(api_key=key, timeout=120)
+        finally:
+            if before is None:
+                os.environ.pop("COMFY_BASE_URL", None)
+            else:
+                os.environ["COMFY_BASE_URL"] = before
+
+
+def _lane_of(kind: str, jid: str) -> str:
+    """Renders, and previews that are a render's first chunk (Recast in the clip's place), need the big GPU."""
+    if kind == "render":
+        return "heavy"
+    if kind == "preview":
+        p = (JOBS.get(jid) or {}).get("params") or {}
+        return "heavy" if _mode(p) == "recast" and (p.get("place") or {}).get("mode") == "keep" else "quick"
+    return "quick"
+
+
+def _enqueue(kind: str, jid: str, arg: Any) -> "queue.Queue":
+    q = QUEUES[_lane_of(kind, jid)]
+    q.put((kind, jid, arg))
+    return q
 
 
 def _read_clip(j: dict, work: dict, frame: Path) -> list[describe.Performer]:
@@ -452,6 +497,21 @@ def _seen(found: list[describe.Performer]) -> str:
         f"a {f.what or f.kind}{where[f.side]}" + (f" ({f.pose})" if f.pose else "") for f in found) + "."
 
 
+def _cast_pairs(work: dict, p: dict, chars: list[dict]) -> list[dict]:
+    """In the clip's place with chosen performers: each chosen person, left to right, with the character who
+    replaces them (the page pairs them the same way)."""
+    picks = p["motion"].get("picks") or []
+    if _mode(p) != "recast" or p["place"]["mode"] != "keep" or not picks or not work.get("people_dir"):
+        return []
+    src = DATA / work["people_dir"]
+    chosen = sorted((f for f in people.load(src) if f.id in picks), key=lambda f: f.cx)
+    if len(chosen) != len(chars) or not (src / "frame.png").exists():
+        return []
+    return [{"person": f.id, "box": list(f.box), "frame_url": _url(src / "frame.png"),
+             "character_url": _url(_upload_path(c["upload_id"], "image")), "text": c.get("text", "")}
+            for f, c in zip(chosen, chars)]
+
+
 def run_preview(j: dict, seed: int) -> None:
     from recast import runner
 
@@ -467,6 +527,11 @@ def run_preview(j: dict, seed: int) -> None:
     d, p = _job_dir(j["id"]), j["params"]
     frame = d / work["frame"]
     chars = _characters(p)
+    cast = _cast_pairs(work, p, chars)
+    if cast:  # who replaces whom, shown at once; its first 5 seconds take minutes (_first_chunk)
+        _update(j, progress={"stage": "starting_gpu", "eta_seconds": FIRST_SECONDS + 60},
+                preview={"kind": "cast", "pending": True, "cast": cast, "seed": seed,
+                         "frame_url": _url(_picked_frame(work, d, frame)), "prompt_summary": _summary(p)})
     notes: list[str] = []
     poses, shots, bodies, side = ["", ""], ["", ""], ["", ""], ""
     found: list[describe.Performer] = []
@@ -656,14 +721,21 @@ def run_preview(j: dict, seed: int) -> None:
     ref = _named(ref, "reference")
     if _cancelled(j):
         return
+    first, reuse = {}, None
+    if kind == "cast":  # the reference is a sheet of cut-outs: show the video's real start instead
+        # the first preview renders with the render's own seed; "Try another version" brings a new one
+        engine["seed"] = seed if seed != 1 else (p.get("seed") or graph.DEFAULT_SEED)
+        first, reuse = _first_chunk(j, {**work, **engine, "reference": ref.name}, d, p, ref)
+        if _cancelled(j):
+            return
     mine = j.get("scene") or {}
     if engine.get("engine") == "vace" and mine.get("edited"):  # edited while the still was being drawn
         engine["scene"] = mine["text"]
     shown = _picked_frame(work, d, frame)
-    _update(j, state="awaiting_approval", error=None,
-            _work={**work, "reference": ref.name, "edited": False, **engine},
+    _update(j, state="awaiting_approval", error=None, progress=None,
+            _work={**work, "reference": ref.name, "edited": False, **engine, "first": reuse},
             preview={"frame_url": _url(shown), "reference_url": _url(ref), "seed": seed, "kind": kind,
-                     "prompt_summary": _summary(p), "notes": notes, "seen": seen})
+                     "prompt_summary": _summary(p), "notes": notes, "seen": seen, **first})
 
 
 def run_render(j: dict, _arg: Any = None) -> None:
@@ -673,16 +745,7 @@ def run_render(j: dict, _arg: Any = None) -> None:
     chars = _characters(p)
     two = p.get("performers") == 2
     if work.get("engine") == "scail":
-        place = background if scene == "new" else ""
-        rp = scail.ScailParams(
-            drive=drive.name, reference=ref.name, layout=work["layout"], chunks=work["segments"],
-            prompt=scail.prompt(work.get("texts") or [c["text"] for c in chars], work.get("poses") or [],
-                                replace=work["replace"], place=place),
-            track=work["track"], people=work["people"], replace=work["replace"], picks=work.get("picks"),
-            keep_points=[[list(pt) for pt in keep.inside_points(d / name)] for name in work["picks"]]
-            if work.get("picks") and work["replace"] else None,
-            others=list(work.get("others") or []) if work.get("picks") and work["replace"] else None,
-            seed=p.get("seed") or graph.DEFAULT_SEED, prefix=f"recast/app_{j['id']}")
+        rp = _scail_params(j, work, d, p, ref, drive)
         engine, steps, models = scail, scail.STEPS, scail.MODELS
     elif work.get("engine") == "vace":
         rp = vace.VaceParams(drive=drive.name, reference=ref.name, layout=work["layout"], chunks=work["segments"],
@@ -701,6 +764,100 @@ def run_render(j: dict, _arg: Any = None) -> None:
     _render_and_finish(j, work, d, p, rp, g, ref, drive, engine, steps, models)
 
 
+def _scail_params(j: dict, work: dict, d: Path, p: dict, ref: Path, drive: Path, *,
+                  chunks: int | None = None) -> scail.ScailParams:
+    """The render's SCAIL-2 settings. With `chunks=1`, its first chunk alone: the preview, which is then
+    exactly how the video starts."""
+    scene, background = _scene(p)
+    keeping = bool(work.get("picks") and work["replace"])
+    return scail.ScailParams(
+        drive=drive.name, reference=ref.name, layout=work["layout"], chunks=chunks or work["segments"],
+        prompt=scail.prompt(work.get("texts") or [c["text"] for c in _characters(p)], work.get("poses") or [],
+                            replace=work["replace"], place=background if scene == "new" else ""),
+        track=work["track"], people=work["people"], replace=work["replace"], picks=work.get("picks"),
+        keep_points=[[list(pt) for pt in keep.inside_points(d / name)] for name in work["picks"]] if keeping else None,
+        others=list(work.get("others") or []) if keeping else None,
+        # the preview's seed: "Try another version" re-rolls the video itself, so the render keeps what was shown
+        seed=work.get("seed") or p.get("seed") or graph.DEFAULT_SEED,
+        prefix=f"recast/app_{j['id']}")  # the same graph, so a one-chunk preview is the render itself
+
+
+def _first_chunk(j: dict, work: dict, d: Path, p: dict, ref: Path) -> tuple[dict, dict]:
+    """Render the video's first chunk (5 s), bystanders kept as filmed like the full render, for the preview.
+
+    In the clip's place the reference is only a sheet of cut-outs (who replaces whom), which said nothing about
+    how the video would look. A short render is not the start of the long one: drawn from different noise, a
+    17-frame render invented a white object on a table that the full render never had. The first chunk is
+    exactly the full render's first chunk (same graph, seed and length), so what is approved is how the video
+    starts; a one-chunk (5 s) video is that chunk, delivered from it without rendering again. The preview plays
+    all of it, muted (sound and the delivery size come with the render). Returns (urls, reuse)."""
+    from recast import runner
+
+    t0 = time.time()
+    drive = d / work["drive"]
+    rp = _scail_params(j, work, d, p, ref, drive, chunks=1)
+    rp.validate()
+    g = scail.build(rp)
+    with _comfy() as client:
+        def make():
+            rp.reference, rp.drive = client.assets.from_file(ref), client.assets.from_file(drive)
+            if rp.picks:
+                rp.picks = [client.assets.from_file(d / name) for name in work["picks"]]
+            if rp.others:
+                rp.others = [client.assets.from_file(d / name) for name in work["others"]]
+            return scail.build(rp)
+        gjob = runner.submit_graph(client, make, d / f"first_submission_{recipe.graph_sha(g)[:10]}.json")
+        RUNNING[j["id"]] = gjob
+        try:
+            gjob = runner.follow(gjob, _preview_progress(j, t0))
+        finally:
+            RUNNING.pop(j["id"], None)
+        if _cancelled(j):
+            return {}, {}
+        files = runner.download(gjob, d / "first", node_id=scail.FINAL_NODE)
+        kept = [runner.download(gjob, d / "first", node_id=node)[0]
+                for node in (scail.KEEP_OTHERS_NODE, scail.KEEP_NEW_NODE, scail.KEEP_MASK_NODE)] if files and rp.keep_points else []
+    if not files:
+        raise RuntimeError("the preview finished without a video")
+    _update(j, progress={"stage": "finishing", "eta_seconds": 15})
+    video = composite.keep_others(drive, files[0], *kept, d / "first_kept.mp4") if kept else files[0]
+    clip = _named(media.without_audio(video, d / "first.mp4"), "first")
+    still = _named(media.frame_at(clip, d / "first_frame.jpg", layout=work["layout"], start=0, box=None), "first_frame")
+    reuse = {"sha": recipe.graph_sha(g), "job_id": gjob.id, "seconds": round(time.time() - t0, 1),
+             "render": files[0].relative_to(d).as_posix(), "kept": [k.relative_to(d).as_posix() for k in kept]}
+    return {"first_url": _url(clip), "first_frame_url": _url(still)}, reuse
+
+
+FIRST_SECONDS = 330  # the first chunk on the 16 GB card, measured: loading, tracking, 6 steps and what follows
+AFTER_STEPS = 75  # after the last step: decoding, tracking everyone else, putting them back as filmed
+
+
+def _preview_progress(j: dict, t0: float):
+    """The first chunk's progress, for the page: waiting for the GPU, loading, step k of 6, then the bystanders
+    being put back, each with the time left."""
+    clock = {"first": None}
+
+    def on_event(ev: dict) -> None:
+        if _cancelled(j):
+            return
+        now = time.time()
+        if ev["kind"] == "status" and ev["status"] == "queued":
+            _update(j, progress={"stage": "waiting_for_gpu", "queue_position": ev.get("queue_position")})
+        elif ev["kind"] == "status" and ev["status"] == "running":
+            _update(j, progress={"stage": "loading_models", "eta_seconds": FIRST_SECONDS})
+        elif ev["kind"] == "progress" and ev.get("steps") == scail.STEPS and ev.get("step"):
+            step = int(ev["step"])
+            clock["first"] = clock["first"] or (now, step)
+            began, at = clock["first"]
+            rate = (now - began) / (step - at) if step > at else 40.0
+            if step >= scail.STEPS:  # drawn: what is left is putting everyone else back as filmed
+                _update(j, progress={"stage": "finishing", "eta_seconds": AFTER_STEPS})
+            else:
+                _update(j, progress={"stage": "rendering", "step": step, "steps": scail.STEPS,
+                                     "eta_seconds": round(rate * (scail.STEPS - step) + AFTER_STEPS)})
+    return on_event
+
+
 def _animate2_params(j, work, p, ref, drive, chars, two, scene, background) -> graph.RecastParams:
     return graph.RecastParams(
         reference=ref.name, drive=drive.name,
@@ -716,8 +873,6 @@ def _animate2_params(j, work, p, ref, drive, chars, two, scene, background) -> g
 
 def _render_and_finish(j, work, d, p, rp, g, ref, drive, engine, steps, models) -> None:
     """Submit, report progress (steps restart at each segment or chunk), deliver, write the recipe."""
-    from recast import runner
-
     total = work["segments"] * steps
     clock = {"seg": 1, "last": 0, "first": None, "first_done": 0}
 
@@ -747,6 +902,28 @@ def _render_and_finish(j, work, d, p, rp, g, ref, drive, engine, steps, models) 
                 "step": step, "steps": steps, "eta_seconds": round(rate * (total - done) + 25)})
 
     t0 = time.time()
+    first = work.get("first") or {}
+    if (engine is scail and work["segments"] == 1 and first.get("sha") == recipe.graph_sha(g)
+            and (d / first["render"]).exists()):
+        # the approved preview rendered this very graph already (_first_chunk): deliver it
+        _update(j, state="finishing", progress={"stage": "finishing", "eta_seconds": 20})
+        t0 -= first.get("seconds", 0)  # the video's GPU time was spent in the preview
+        files, kept, job_id = [d / first["render"]], [d / k for k in first["kept"]] or None, first["job_id"]
+    else:
+        files, kept, job_id = _submit_render(j, work, d, rp, g, ref, drive, engine, on_event)
+        if files is None:
+            return
+    if not files:
+        raise RuntimeError("the render finished without a video")
+    if kept:  # everyone not recast, as filmed (recast/keep.py)
+        files = [composite.keep_others(drive, files[0], *kept, d / "render_kept.mp4")]
+    _deliver(j, work, d, p, rp, g, ref, drive, engine, models, files, job_id, t0)
+
+
+def _submit_render(j, work, d, rp, g, ref, drive, engine, on_event):
+    """Run the render on the GPU. Returns (files, keep masks or None, job id); (None, None, None) if cancelled."""
+    from recast import runner
+
     with _comfy() as client:
         def make():  # uploaded as SDK assets
             rp.reference, rp.drive = client.assets.from_file(ref), client.assets.from_file(drive)
@@ -762,18 +939,18 @@ def _render_and_finish(j, work, d, p, rp, g, ref, drive, engine, steps, models) 
         finally:
             RUNNING.pop(j["id"], None)
         if _cancelled(j):
-            return
+            return None, None, None
         _update(j, state="finishing", progress={"stage": "finishing", "eta_seconds": 20})
         files = runner.download(gjob, d / "render", node_id=engine.FINAL_NODE)
         kept = None
         if files and getattr(rp, "keep_points", None):
             kept = [runner.download(gjob, d / "render", node_id=node)[0]
                     for node in (scail.KEEP_OTHERS_NODE, scail.KEEP_NEW_NODE, scail.KEEP_MASK_NODE)]
-    if not files:
-        raise RuntimeError("the render finished without a video")
-    if kept:  # everyone not recast, as filmed (recast/keep.py)
-        files = [composite.keep_others(drive, files[0], *kept, d / "render_kept.mp4")]
+    return files, kept, gjob.id
 
+
+def _deliver(j, work, d, p, rp, g, ref, drive, engine, models, files, job_id, t0) -> None:
+    """Audio, delivery size, the side by side and the recipe, from the finished render."""
     native = graph.SIZES[work["layout"]]
     if p["audio"] == "mute":
         final = media.without_audio(files[0], d / "recast_native.mp4")
@@ -793,7 +970,7 @@ def _render_and_finish(j, work, d, p, rp, g, ref, drive, engine, steps, models) 
         rp.others = list(work["others"])
     recipe.write(d / "recipe.json", params=rp, g=g,
                  inputs={"reference": ref, "drive": drive, **{f"pick{k}": d / n for k, n in enumerate(picks)}},
-                 outputs={"recast": final, "compare": compare}, job_id=gjob.id, seconds=seconds, models=models)
+                 outputs={"recast": final, "compare": compare}, job_id=job_id, seconds=seconds, models=models)
     if _cancelled(j):
         return
     _update(j, state="done", progress=None, result={
@@ -848,9 +1025,10 @@ def describe_upload(uid: str, role: str) -> None:
         _write_json(d / "upload.json", u)
 
 
-def _worker() -> None:
+def _worker(lane: str) -> None:
+    _LANE.name = lane
     while True:
-        kind, jid, arg = TASKS.get()
+        kind, jid, arg = QUEUES[lane].get()
         if kind in ("describe_upload", "find_people"):
             (describe_upload if kind == "describe_upload" else find_people)(jid, arg)
             continue
@@ -872,7 +1050,8 @@ def _worker() -> None:
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     _load()
-    threading.Thread(target=_worker, name="gpu-worker", daemon=True).start()
+    for lane in LANES:
+        threading.Thread(target=_worker, args=(lane,), name=f"gpu-{lane}", daemon=True).start()
     yield
 
 
@@ -992,7 +1171,7 @@ def describe_upload_request(uid: str, body: dict) -> dict:
     with LOCK:
         if role not in u.get("descriptions", {}) and role not in u.get("describing", []):
             u.setdefault("describing", []).append(role)
-            TASKS.put(("describe_upload", uid, role))
+            _enqueue("describe_upload", uid, role)
     return _public(u)
 
 
@@ -1015,7 +1194,7 @@ def find_people_request(uid: str, body: dict | None = None) -> dict:
         if key not in found or (body.get("retry") and found[key].get("state") == "ready"
                                 and (found[key].get("error") or not found[key].get("people"))):
             found[key] = {"state": "finding"}
-            TASKS.put(("find_people", uid, (key, start, layout, box)))
+            _enqueue("find_people", uid, (key, start, layout, box))
     return {"key": key, **_public(u)}
 
 
@@ -1181,7 +1360,7 @@ def preview(jid: str, body: dict | None = None) -> dict:
         new_seed = bool((body or {}).get("new_seed"))
         seed = random.randrange(1, 2**31) if new_seed else (j.get("preview") or {}).get("seed", 1)
         _update(j, state="matching", error=None)
-    TASKS.put(("preview", jid, seed))
+    _enqueue("preview", jid, seed)
     return _public(j)
 
 
@@ -1195,9 +1374,9 @@ def approve(jid: str) -> dict:
             raise HTTPException(409, "Approve the preview first.")
         if _renders_left() < j["cost_renders"]:
             raise HTTPException(402, "No renders left on this server.")
-        _update(j, state="queued", error=None, progress={"stage": "waiting_for_gpu", "queue_position": TASKS.qsize() + 1,
+        _update(j, state="queued", error=None, progress={"stage": "waiting_for_gpu", "queue_position": QUEUES["heavy"].qsize() + 1,
                                              "eta_seconds": j["_work"]["segments"] * 520})
-    TASKS.put(("render", jid, None))
+    _enqueue("render", jid, None)
     return _public(j)
 
 
@@ -1244,9 +1423,18 @@ def _cancel_stored(jid: str) -> None:
     """Cancel the job's latest GPU submission by the id we stored when submitting it."""
     subs = sorted(_job_dir(jid).glob("*submission*.json"), key=lambda f: f.stat().st_mtime)
     job_id = json.loads(subs[-1].read_text()).get("job_id") if subs else None
-    if job_id:
-        with _comfy() as client:
-            client.jobs.get(job_id).cancel()
+    if not job_id:
+        return
+    # the id belongs to one lane's endpoint; the other one (when there are two) has never heard of it
+    lanes = ["heavy"] + (["quick"] if _endpoint("quick") != _endpoint("heavy") else [])
+    for k, lane in enumerate(lanes):
+        try:
+            with _comfy(lane) as client:
+                client.jobs.get(job_id).cancel()
+            return
+        except Exception:
+            if k == len(lanes) - 1:
+                raise
 
 
 @app.get("/api/jobs/{jid}")

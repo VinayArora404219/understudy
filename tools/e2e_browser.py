@@ -132,13 +132,20 @@ def run_case(page: Page, base: str, case: dict, out: Path) -> dict:
         step("choices")
         page.get_by_role("button", name="Make a preview").click()
         page.wait_for_selector("text=Does this look right?", timeout=120_000)
+        page.wait_for_timeout(15_000)
+        step("preview_waiting")  # what the visitor sees while the preview is made
+        try:  # and once the GPU is on it, if the page shows steps (the clip's place)
+            page.wait_for_function("() => /step \\d of/i.test(document.body.innerText)", timeout=600_000)
+            step("preview_rendering")
+        except Exception:
+            pass
 
         def preview_done(label: str) -> bool:
             page.wait_for_function(
-                "() => [...document.querySelectorAll('button')].some(b => b.textContent.startsWith('Render video') && !b.disabled)"
+                "() => [...document.querySelectorAll('button')].some(b => /^(Render video|Keep this video)/.test(b.textContent) && !b.disabled)"
                 " || document.body.innerText.includes(\"didn't finish\") || !!document.querySelector('.text-bad')",
                 timeout=PREVIEW_TIMEOUT)
-            ok = page.evaluate("() => [...document.querySelectorAll('button')].some(b => b.textContent.startsWith('Render video') && !b.disabled)")
+            ok = page.evaluate("() => [...document.querySelectorAll('button')].some(b => /^(Render video|Keep this video)/.test(b.textContent) && !b.disabled)")
             step(label, ok=ok, text=page.locator("section").first.inner_text()[:1500])
             return ok
 
@@ -156,7 +163,7 @@ def run_case(page: Page, base: str, case: dict, out: Path) -> dict:
         if not case.get("render"):
             result["outcome"] = "preview ok"
             return result
-        page.get_by_role("button", name=re.compile(r"^Render video")).click()
+        page.get_by_role("button", name=re.compile(r"^(Render video|Keep this video)")).click()
         page.wait_for_url(re.compile(r"/jobs/"), timeout=60_000)
         if case.get("cancel"):
             page.wait_for_timeout(20_000)

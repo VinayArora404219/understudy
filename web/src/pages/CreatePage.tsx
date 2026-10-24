@@ -475,17 +475,28 @@ export function PreviewStep({ job: first, onBack, backLabel = "Change choices" }
 
   const matching = job.state === "matching";
   const cast = job.preview?.kind === "cast";
+  // Recast in the clip's place previews the video's real first 5 seconds (minutes of GPU); a 5 s video is all of it
+  const firstSecond = job.params.mode === "recast" && job.params.place.mode === "keep";
+  const whole = firstSecond && job.params.motion.length === 5;
   const [editing, setEditing] = useState(false); // an unsaved scene edit must not be skipped by a render
   return (
     <section>
       <SectionTitle step="Step 3" title="Does this look right?"
-        hint={cast
-          ? "Your clip stays as filmed: its room, light and objects. Only the performers are replaced, left to right, by these characters. Check the order before a render is spent. Previews are free."
+        hint={firstSecond
+          ? whole
+            ? "This is your video, rendered for real; its sound is added when you keep it. Your clip stays as filmed: its room, light, objects and everyone you didn't choose. Previews are free; keeping it uses a render."
+            : "These are the first 5 seconds of your video, rendered for real. Your clip stays as filmed: its room, light, objects and everyone you didn't choose, and the rest follows your clip's moves the same way. Check them before a render is spent. Previews are free."
           : "This picture sets the look: who appears, what they wear, the style and the place. Moves, poses and framing come from your clip, so the video won't start exactly like this picture. Check the look before a render is spent. Previews are free."} />
       <div className="grid grid-cols-2 gap-4">
         <Frame label={job.params.motion.picks?.length ? "Who you chose, in your first frame" : "What you filmed (first frame)"} src={job.preview?.frame_url} loading={matching && !job.preview} aspect={job.aspect} />
-        <Frame label={cast ? "Who replaces them, left to right" : "The look your video will have"} src={job.preview?.reference_url}
-          loading={matching} accent aspect={cast ? [1, 1] : job.aspect} />
+        {firstSecond
+          ? <Frame label={whole ? "Your video (sound is added when you keep it)" : "The first 5 seconds of your video"} video={job.preview?.first_url} poster={job.preview?.first_frame_url}
+              src={job.preview?.first_url ? undefined : job.preview?.reference_url}
+              loading={matching} wait="Rendering the start of your video… a few minutes" accent
+              aspect={job.preview?.first_url || !job.preview?.reference_url ? job.aspect : [1, 1]}
+              body={matching && job.preview?.cast?.length ? <CastWhileRendering job={job} whole={whole} /> : undefined} />
+          : <Frame label={cast ? "Who replaces them, left to right" : "The look your video will have"} src={job.preview?.reference_url}
+              loading={matching} accent aspect={cast ? [1, 1] : job.aspect} />}
       </div>
       {job.preview && !matching && job.state !== "failed" && <p className="mt-4 text-sm text-ink-300">{job.preview.prompt_summary}</p>}
       {!matching && job.preview?.seen && <p className="mt-2 text-xs text-ink-500">{job.preview.seen}</p>}
@@ -500,7 +511,7 @@ export function PreviewStep({ job: first, onBack, backLabel = "Change choices" }
           <Button disabled={matching || again.isPending} onClick={() => again.mutate()}>Try another version</Button>
           <Button variant="primary" size="lg" disabled={job.state !== "awaiting_approval" || approve.isPending || editing}
             title={editing ? "Save or cancel your edit first" : undefined} onClick={() => approve.mutate()}>
-            Render video · {job.cost_renders} render{job.cost_renders > 1 ? "s" : ""}
+            {whole && job.preview?.first_url ? "Keep this video" : "Render video"} · {job.cost_renders} render{job.cost_renders > 1 ? "s" : ""}
           </Button>
         </div>
       </div>
@@ -560,19 +571,56 @@ function SceneLine({ job, onEditing }: { job: Job; onEditing: (editing: boolean)
   );
 }
 
-function Frame({ label, src, loading, accent, aspect }: { label: string; src?: string; loading?: boolean; accent?: boolean; aspect?: [number, number] }) {
+function Frame({ label, src, video, poster, loading, wait = "Building your preview…", accent, aspect, body }: {
+  label: string; src?: string; video?: string; poster?: string; loading?: boolean; wait?: string; accent?: boolean;
+  aspect?: [number, number]; body?: React.ReactNode }) {
   return (
     <figure>
       <div className={cx("relative overflow-hidden rounded-[var(--radius-card)] border",
         accent ? "border-accent/40" : "border-ink-700")} style={aspectOf(aspect)}>
-        {loading ? (
+        {body ?? (loading ? (
           <div className="skeleton absolute inset-0 grid place-items-center">
-            <span className="flex items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 text-sm"><Spinner /> Building your preview…</span>
+            <span className="flex items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 text-sm"><Spinner /> {wait}</span>
           </div>
-        ) : src ? <img src={src} alt={label} className="h-full w-full object-cover" /> : null}
+        ) : video ? <video key={video} src={video} poster={poster} autoPlay loop muted playsInline aria-label={label} className="h-full w-full object-cover" />
+          : src ? <img src={src} alt={label} className="h-full w-full object-cover" /> : null)}
       </div>
       <figcaption className="mt-2 text-sm text-ink-500">{label}</figcaption>
     </figure>
+  );
+}
+
+/** While the preview renders: who replaces whom, at once, and the GPU job's progress over all of its phases. */
+function CastWhileRendering({ job, whole }: { job: Job; whole: boolean }) {
+  const p = job.progress;
+  const pct = !p ? 0 : p.stage === "starting_gpu" ? 2 : p.stage === "waiting_for_gpu" ? 4 : p.stage === "loading_models" ? 8
+    : p.stage === "rendering" ? Math.round(12 + (70 * (p.step ?? 0)) / (p.steps || 6)) : 88;
+  const line = !p ? "Starting…" : p.stage === "starting_gpu" ? "Reading your clip…" : p.stage === "waiting_for_gpu" ? "Waiting for the GPU…"
+    : p.stage === "loading_models" ? "Loading the models…" : p.stage === "rendering" ? `Drawing your video: step ${p.step} of ${p.steps}`
+    : "Putting everyone else back as filmed…";
+  const left = p?.eta_seconds ? ` · about ${Math.max(1, Math.round(p.eta_seconds / 60))} min left` : "";
+  return (
+    <div className="absolute inset-0 flex flex-col justify-between gap-3 bg-ink-900 p-4">
+      <div className="flex min-h-0 flex-1 items-center justify-center gap-4 sm:gap-6">
+        {job.preview?.cast?.map((c) => (
+          <figure key={c.person} className="flex flex-col items-center gap-1">
+            <div className="flex items-center gap-2">
+              <PersonThumb frameUrl={c.frame_url} box={c.box} className="h-16 w-auto max-w-16" />
+              <span aria-hidden className="text-ink-500">→</span>
+              <img src={c.character_url} alt={c.text || "Character"} className="h-16 w-16 rounded-lg object-cover" />
+            </div>
+            <figcaption className="text-xs text-ink-500">Person {c.person}</figcaption>
+          </figure>
+        ))}
+      </div>
+      <div>
+        <p className="flex items-center gap-2 text-sm text-ink-300"><Spinner /> {whole ? "Rendering your video" : "Rendering the first 5 seconds"}{left}</p>
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink-800" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+          <div className="h-full rounded-full bg-accent transition-all duration-700" style={{ width: `${pct}%` }} />
+        </div>
+        <p className="mt-1 text-xs text-ink-500">{line}</p>
+      </div>
+    </div>
   );
 }
 

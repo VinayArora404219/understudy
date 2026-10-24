@@ -158,6 +158,12 @@ colour, and a white studio came back grey.
   reference for the look: SCAIL-2 re-poses its characters to the clip, and VACE takes only its style while
   the clip's depth shapes every frame. *Fix:* it is labelled "The look your video will have", and the page
   says moves, poses and framing come from the clip.
+- **In the clip's place that preview was a collage:** the characters cut out on a plain colour, which is what
+  SCAIL-2 is given but nothing like the video. *Fix:* the preview renders the video's first 5 s and plays
+  them, muted; who replaces whom shows at once, with the progress, while they render. A 17-frame render was tried first and invented things the full render didn't have (a
+  shorter render draws different noise); the full first chunk is exactly the video's start. A 5 s video is
+  that chunk, so approving delivers it at once, and "Try another version" now re-rolls the seed the render
+  uses (it used to be ignored).
 - **The step bar scrolled sideways on a phone.** *Fix:* tighter spacing at phone width, checked at 390 px.
 - **"We couldn't look for people in this frame"** appeared when the GPU machine had restarted and the API
   proxy with it. *Fix:* the error reads as a sentence with Try again, and "Try again" now really looks again

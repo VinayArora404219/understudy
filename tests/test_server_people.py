@@ -32,7 +32,7 @@ def test_finding_people_is_queued_once_per_start_point(app):
     assert r.status_code == 200 and r.json()["key"] == "0.00_portrait"
     assert r.json()["people"]["0.00_portrait"] == {"state": "finding"}
     c.post("/api/uploads/up_clip/people", json={"start": 0})
-    assert app.TASKS.qsize() == 1
+    assert app.QUEUES["quick"].qsize() == 1
 
 
 def test_a_job_can_only_choose_people_found_at_its_start(app):
@@ -77,10 +77,10 @@ def test_try_again_looks_again_only_after_a_miss(app):
     c = TestClient(app.app)
     app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": [{"id": 1}]}}
     c.post("/api/uploads/up_clip/people", json={"start": 0, "retry": True})
-    assert app.TASKS.qsize() == 0  # found someone: a retry keeps them
+    assert app.QUEUES["quick"].qsize() == 0  # found someone: a retry keeps them
     app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": []}}
     c.post("/api/uploads/up_clip/people", json={"start": 0, "retry": True})
-    assert app.TASKS.qsize() == 1
+    assert app.QUEUES["quick"].qsize() == 1
 
 
 def test_swap_chooses_its_performer_from_the_people_found(app):
@@ -127,3 +127,58 @@ def test_a_short_outage_is_retried_before_the_visitor_sees_an_error(app, monkeyp
     monkeypatch.setattr(runner, "submit_graph", lambda *a: calls.append(1) or (_ for _ in ()).throw(RuntimeError("down")))
     app.find_people("up_clip", ("0.00_portrait", 0.0, "portrait", None))
     assert len(calls) == 3 and "error" in app.UPLOADS["up_clip"]["people"]["0.00_portrait"]  # then it says so
+
+
+
+def test_the_preview_is_the_renders_first_chunk(app, tmp_path):
+    work = {"layout": "portrait", "segments": 2, "replace": True, "track": "person", "people": 1, "seed": 777,
+            "picks": None, "texts": ["a man in glasses"]}
+    p = _params(None)
+    full = app._scail_params({"id": "job_x"}, work, tmp_path, p, tmp_path / "r.png", tmp_path / "d.mp4")
+    first = app._scail_params({"id": "job_x"}, work, tmp_path, p, tmp_path / "r.png", tmp_path / "d.mp4", chunks=1)
+    assert (full.chunks, first.chunks) == (2, 1)
+    assert full.seed == first.seed == 777  # the version shown is the version rendered
+    g_full, g_first = app.scail.build(full), app.scail.build(first)
+    assert all(g_first[k] == g_full[k] for k in g_first if k.startswith("c0_") or k in ("pos", "ref", "sigmas"))
+    # a one-chunk video's render graph is the preview's, so the preview's output is delivered as the video
+    one = {**work, "segments": 1}
+    assert app.scail.build(app._scail_params({"id": "job_x"}, one, tmp_path, p, tmp_path / "r.png", tmp_path / "d.mp4")) \
+        == app.scail.build(app._scail_params({"id": "job_x"}, one, tmp_path, p, tmp_path / "r.png", tmp_path / "d.mp4", chunks=1))
+
+
+def test_who_replaces_whom_is_paired_left_to_right_for_the_preview(app, tmp_path):
+    import json
+
+    src = tmp_path / "uploads" / "up_clip" / "people_0.00_portrait"
+    src.mkdir(parents=True)
+    (src / "frame.png").write_bytes(b"x")
+    found = [{"id": 1, "box": [0.6, 0.1, 0.2, 0.8], "area": 0.16, "cx": 0.7, "mask": "person_1.png"},
+             {"id": 2, "box": [0.1, 0.1, 0.2, 0.8], "area": 0.16, "cx": 0.2, "mask": "person_2.png"},
+             {"id": 3, "box": [0.4, 0.1, 0.1, 0.4], "area": 0.04, "cx": 0.45, "mask": "person_3.png"}]
+    (src / "people.json").write_text(json.dumps(found))
+    two = [{"upload_id": "up_face", "text": "a man in glasses"}, {"upload_id": "up_face", "text": "a racer"}]
+    work = {"people_dir": "uploads/up_clip/people_0.00_portrait"}
+    pairs = app._cast_pairs(work, _params([1, 2], characters=two, performers=2), two)
+    assert [(c["person"], c["text"]) for c in pairs] == [(2, "a man in glasses"), (1, "a racer")]  # left to right
+    assert pairs[0]["box"] == [0.1, 0.1, 0.2, 0.8] and pairs[0]["frame_url"].endswith("people_0.00_portrait/frame.png")
+    assert app._cast_pairs(work, _params([1, 2], characters=two, place={"mode": "describe", "text": "a beach"}), two) == []
+    assert app._cast_pairs(work, _params([1, 2], characters=two, mode="restyle"), two) == []
+
+
+def test_quick_work_never_waits_behind_a_render(app, monkeypatch):
+    c = TestClient(app.app)
+    app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": [{"id": 1}]}}
+    keep = c.post("/api/jobs", json=_params([1])).json()["id"]
+    place = c.post("/api/jobs", json=_params([1], place={"mode": "describe", "text": "a beach"})).json()["id"]
+    assert app._lane_of("render", place) == "heavy"
+    assert app._lane_of("preview", keep) == "heavy"  # the clip's place previews with a real render
+    assert app._lane_of("preview", place) == "quick"  # a picture from the image editor
+    assert app._lane_of("find_people", "up_clip") == app._lane_of("describe_upload", "up_face") == "quick"
+    monkeypatch.setenv("COMFY_BASE_URL", "http://big:1")
+    monkeypatch.delenv("COMFY_QUICK_BASE_URL", raising=False)
+    assert app._endpoint("quick") == app._endpoint("heavy")  # one endpoint: both lanes share it
+    monkeypatch.setenv("COMFY_QUICK_BASE_URL", "http://small:2")
+    assert app._endpoint("quick")[0] == "http://small:2" and app._endpoint("heavy")[0] == "http://big:1"
+    with app._comfy("quick") as client:
+        assert "small" in repr(client)
+    assert app.os.environ["COMFY_BASE_URL"] == "http://big:1"  # put back for everyone else

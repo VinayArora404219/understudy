@@ -105,6 +105,14 @@ export type JobState =
   | "failed"
   | "cancelled";
 
+export interface CastPair {
+  person: number; // as numbered on the picker
+  box: [number, number, number, number]; // in frame_url, fractions
+  frame_url: string; // the clip's start frame, unmarked
+  character_url: string; // the character's photo
+  text: string; // how they look
+}
+
 export interface JobPreview {
   frame_url: string; // the clip's first frame
   reference_url: string; // what the render will start from
@@ -113,6 +121,10 @@ export interface JobPreview {
   notes?: string[]; // anything the visitor should know about how their images were used
   seen?: string; // how we read the clip: "a dog on the left (leans forward …)"
   kind?: "still" | "cast"; // still: the picture the video starts from; cast: who replaces whom, left to right
+  first_url?: string; // cast: the video's first second, rendered for real (muted, loops)
+  first_frame_url?: string; // its first frame, for posters
+  pending?: boolean; // cast: shown at once while the first second renders
+  cast?: CastPair[]; // cast: each chosen person, left to right, with who replaces them
 }
 
 export interface JobProgress {

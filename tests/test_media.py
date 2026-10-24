@@ -135,3 +135,4 @@ def test_moments_sheet_is_four_frames_in_a_grid(tmp_path):
                     "-pix_fmt", "yuv420p", str(clip)], check=True, timeout=60)
     info = media.probe(media.moments_sheet(clip, tmp_path / "m.png", height=100))
     assert info.height == 200 and info.width == 2 * (round(160 * 100 / 284) // 2 * 2)
+

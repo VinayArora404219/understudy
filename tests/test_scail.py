@@ -138,3 +138,4 @@ def test_placed_sheet_puts_each_character_where_their_performer_stands(tmp_path)
     assert out.getpixel((70, 60)) == (255, 0, 0)  # the first character on the left performer
     assert out.getpixel((120, 60)) == (0, 0, 255)  # the second on the right one
     assert out.getpixel((5, 5)) == (128, 128, 128)  # the room's colour around them
+

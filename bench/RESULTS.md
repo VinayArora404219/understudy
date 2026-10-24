@@ -327,3 +327,20 @@ face and glasses, which no longer show up on the man in front of him (398 s).
 
 Also: a character's SAM3 mask carried a loose strip of trousers from the bottom of their photo, which
 floated under them on the reference. Pieces under 15% of the biggest part are now dropped.
+
+## The preview is the video's real start (2026-10-24)
+
+In the clip's place the preview used to be the reference itself: the characters cut out of their photos on
+a plain colour. It is what SCAIL-2 is given, and it says nothing about how the video will look. The preview
+now renders the video's first chunk (5 s) and plays all of it, muted, bystanders kept as filmed like the
+render; who replaces whom is shown at once, with the job's progress, while it renders.
+
+- **A short render is not the start of the long one.** Two 17-frame renders (same reference, masks, prompt
+  and seed) put the characters right, but leaked a costume's colours onto bystanders, and one drew a white
+  object on the table; the full render's first second had neither. A shorter latent draws different noise.
+- **The full first chunk is.** The render's first chunk is the same graph, seed and length, so the preview
+  matches the video frame for frame (checked on the group clip). A 5 s video is one chunk: its render graph
+  is byte-identical to the preview's, so approving delivers the preview's output without the GPU (17 s from
+  approve to download, against 306 to 385 s for a render).
+- **Cost on the 16 GB card:** a preview takes about 6.5 min instead of about 1 min; a 5 s video then costs
+  nothing more, a longer one renders as before. "Try another version" re-rolls the seed the video uses.

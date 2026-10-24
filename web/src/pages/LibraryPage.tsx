@@ -20,7 +20,7 @@ export function LibraryPage() {
           <Link key={j.id} to={`/jobs/${j.id}`}>
             <Card className="overflow-hidden transition hover:border-ink-500">
               <div className="aspect-[9/16] bg-ink-900">
-                {j.preview?.reference_url && <img src={j.preview.reference_url} alt="" className="h-full w-full object-cover" />}
+                {(j.preview?.first_frame_url ?? j.preview?.reference_url) && <img src={j.preview?.first_frame_url ?? j.preview?.reference_url} alt="" className="h-full w-full object-cover" />}
               </div>
               <div className="flex items-center justify-between gap-2 p-3">
                 <span className="truncate text-sm font-medium">{j.title}</span>

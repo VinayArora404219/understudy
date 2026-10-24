@@ -65,6 +65,6 @@ def test_cancel_reaches_the_gpu_without_a_live_handle(app, monkeypatch):
             def get(job_id):
                 return type("J", (), {"cancel": lambda self: cancelled.append(job_id)})()
 
-    monkeypatch.setattr(app, "_comfy", lambda: Client())
+    monkeypatch.setattr(app, "_comfy", lambda lane=None: Client())
     r = TestClient(app.app).post("/api/jobs/job_test/cancel")
     assert r.status_code == 200 and j["state"] == "cancelled" and cancelled == ["gpu-123"]
