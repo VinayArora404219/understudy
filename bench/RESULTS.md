@@ -344,3 +344,60 @@ render; who replaces whom is shown at once, with the job's progress, while it re
   approve to download, against 306 to 385 s for a render).
 - **Cost on the 16 GB card:** a preview takes about 6.5 min instead of about 1 min; a 5 s video then costs
   nothing more, a longer one renders as before. "Try another version" re-rolls the seed the video uses.
+
+## Running on Modal (2026-10-24)
+
+The judge build renders on Modal (`deploy/modal/`): ComfyUI 0.41.3 + comfy-api-proxy 0.1.6 per container, same
+model files (pinned and sha256-checked, `manifests/models.json`), same torch 2.13.0+cu130 and custom-node
+versions as the 16 GB development card. The app reaches it exactly as it reaches the development card,
+through comfy-sdk; only `COMFY_BASE_URL` (+ `COMFY_QUICK_BASE_URL`, `COMFY_API_KEY`) change. Two lanes, so a
+render never holds up a picker:
+
+| Lane | GPU | Runs | Idle → zero after |
+|---|---|---|---|
+| heavy | L40S 48 GB | renders; Recast-in-the-clip's-place preview (a real 5 s render) | 12 min |
+| quick | L4 24 GB | finding people (SAM 3.1), reading photos and clips (Qwen3-VL 8B), image-edit previews (Qwen-Image-Edit), cut-outs | 5 min |
+
+**Same seed, same graph, different GPU.** Jobs from the development card were replayed through the app with
+identical parameters. The graphs the server submitted were identical apart from output file names, so any
+difference comes from the GPU stack alone.
+
+| Output (replayed job) | Modal GPU | SSIM vs development card | PSNR |
+|---|---|---:|---:|
+| Recast 5 s render, two performers, in the clip's place (Clip C) | L40S | 0.991 | 42.5 dB |
+| the same, delivered 720p | L40S | 0.987 | 41.6 dB |
+| its kept-performer masks and layers | L40S | ≥ 0.999 | 46–63 dB |
+| Swap preview (image edit, human performer) | L40S / L4 | 0.946 / 0.964 | 25.3 / 27.7 dB |
+| Restyle preview (image edit, Clip C) | L40S / L4 | 0.953 / 0.969 | 27.7 / 29.6 dB |
+| Pose words and scene description (Qwen3-VL) | L40S, L4 | word-for-word identical | |
+
+The video renders match frame for frame by eye. Image-edit previews keep the same composition, subject and
+pose with differences in fine texture (individual trees, road grain): the same seed on a different GPU
+architecture runs different kernels, and a 4-step image edit lets that show. Both Ada-generation cards stay
+within the same picture; the L4 lands closer to the development card than the L40S does.
+
+**Time and cost per task** (GPU seconds from ComfyUI's own execution timestamps; dollars at Modal list
+prices for the GPU plus the container's requested CPU and RAM; development card times from the runs above):
+
+| Task | Lane / GPU | GPU time | Wall time in the app | Cost | Development card |
+|---|---|---:|---:|---:|---:|
+| Recast 5 s render | heavy / L40S | 160–296 s (mean 207) | 196 s | $0.10–0.18 | 699 s for the same job |
+| Restyle 5 s render | heavy / L40S | 109 s | 133 s | $0.07 | no 5 s run (10 s Restyle: 667–941 s) |
+| Image-edit preview | quick / L4 | 43–59 s | 85–131 s | $0.014 | about 1 min |
+| (same on L40S) | heavy / L40S | 21–29 s | 55–60 s | $0.015 | |
+| Reading a photo or clip | quick / L4 | 3–25 s (mean 13) | 12–22 s warm | $0.004 | 45–60 s |
+| Finding people | quick / L4 | 6–9 s | 24–36 s warm (after a reading) | $0.002 | |
+
+No task loaded a model partially on either lane: the L4's 22 GB holds the image-edit model with its text
+encoder, and Qwen3-VL 8B, one after the other. The L4 takes about twice as long as the L40S per task for
+the same dollars, and costs 2.4× less per idle minute, which is where most of a judging session's money goes.
+
+**Start-up.** Cold start to a ready endpoint: 14.7 s on the heavy lane, 30.3 s on the quick lane (ComfyUI
+itself boots in 11–15 s and 21–25 s). The first task after a cold start also loads its models (a photo
+reading took 62 s cold against 12–22 s warm). A warm request is about 1.1 s round trip from the test client.
+An idle tail costs about $0.43 (heavy, 12 min) and $0.09 (quick, 5 min).
+
+**Two lanes at once.** With a Recast-in-the-clip's-place preview rendering on the heavy lane (steps 1→3 of
+6), a second create's photo reading finished in 22 s and its people search in 36 s on the quick lane,
+instead of queueing behind the render. `tools/e2e_browser.py` ran its two-performer Recast case through the
+web app against the Modal lanes: people found, both photos read, the preview rendered, no failures.
