@@ -122,8 +122,13 @@ ROLE_PROMPTS = {
               "off or picks up during the video, such as \"later puts on dark sunglasses\". Do not mention passers-by, "
               "traffic or anything else that moves in the background. Describe one video, not four pictures. No "
               "names, no brand names, no left or right. Reply with the line only."),
+    # Swap: what the performer wears below the waist, read over four moments of the clip, because the first
+    # frame often doesn't show it (a selfie start). Without these words the render invented trousers.
+    "lower": ("This picture shows four moments of one video, in a 2x2 grid. In at most 10 words, name what the "
+              "main person wears below the waist and on their feet, with colours, such as \"blue jeans and white "
+              "trainers\". Only what you can see. No brand names, no left or right. Reply with the words only."),
 }
-ROLE_WORDS = {"character": 30, "outfit": 12, "product": 12, "scene": 65}
+ROLE_WORDS = {"character": 30, "outfit": 12, "product": 12, "scene": 65, "lower": 12}
 MAX_SCENE = 500  # characters a visitor may write when they correct the scene line
 
 

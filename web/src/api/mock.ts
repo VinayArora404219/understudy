@@ -84,7 +84,7 @@ function clipChecks(w: number, h: number, s: number): Check[] {
 }
 
 function title(p: JobParams): string {
-  const what = p.mode === "swap" ? (p.outfit ? "Outfit swap" : p.prop ? "Product swap" : "Place swap") : p.characters.length === 2 ? "Duo recast" : p.characters.length ? "Recast" : p.style ? STYLES.find((s) => s.key === p.style)?.name ?? "Restyle" : "Move";
+  const what = p.mode === "swap" ? (p.outfit ? "Outfit swap" : "Place swap") : p.characters.length === 2 ? "Duo recast" : p.characters.length ? "Recast" : p.style ? STYLES.find((s) => s.key === p.style)?.name ?? "Restyle" : "Move";
   return `${what} · ${p.motion.length} s`;
 }
 
@@ -94,7 +94,6 @@ function summary(p: JobParams): string {
   parts.push(b ? `The performer on the left becomes ${a.text.trim()} and the one on the right becomes ${b.text.trim()}`
     : a ? `The performer becomes ${a.text.trim() || "your character"}` : "The performer stays themselves");
   if (p.outfit) parts.push(`wearing ${p.outfit.text.trim() || "your outfit"}`);
-  if (p.prop) parts.push(`holding ${p.prop.text.trim() || "your product"}`);
   if (p.style) parts.push(`drawn as ${STYLES.find((s) => s.key === p.style)?.name}`);
   parts.push(p.place.mode === "keep" ? "in the original place" : p.place.mode === "describe"
     ? `in ${p.place.text?.trim() || "the place you described"}` : "in the place from your image");

@@ -9,7 +9,7 @@ const MODES = [
     swatch: "from-[#c8f560]/30 to-[#7dd3fc]/10" },
   { key: "restyle", name: "Restyle", line: "The same video, redrawn: anime, toy figure, pixel art, comic ink.",
     swatch: "from-[#f0abfc]/30 to-[#7dd3fc]/10" },
-  { key: "swap", name: "Swap", line: "You stay you. Change one thing: the outfit, a product in your hand, or the place.",
+  { key: "swap", name: "Swap", line: "You stay you. Change one thing: your outfit or the place.",
     swatch: "from-[#fde68a]/30 to-[#f9a8d4]/10" },
 ];
 

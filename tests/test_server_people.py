@@ -81,3 +81,20 @@ def test_try_again_looks_again_only_after_a_miss(app):
     app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": []}}
     c.post("/api/uploads/up_clip/people", json={"start": 0, "retry": True})
     assert app.TASKS.qsize() == 1
+
+
+def test_swap_chooses_its_performer_from_the_people_found(app):
+    c = TestClient(app.app)
+    found = [{"id": 1, "area": 0.30}, {"id": 2, "area": 0.01}, {"id": 3, "area": 0.12}]  # 2: a far-off pedestrian
+    app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": found}}
+    outfit = {**_params(None, mode="swap", characters=[], outfit={"upload_id": "up_face", "text": "a red t-shirt"})}
+    outfit["motion"].pop("picks")
+    r = c.post("/api/jobs", json=outfit).json()
+    assert r["params"]["motion"]["picks"] == [1] and r["params"]["performers"] == 1  # the biggest one
+    place = _params(None, mode="swap", characters=[], place={"mode": "describe", "text": "a beach"})
+    place["motion"].pop("picks")
+    r = c.post("/api/jobs", json=place).json()
+    assert r["params"]["motion"]["picks"] == [1, 3] and r["params"]["performers"] == 2  # everyone clearly in view
+    app.UPLOADS["up_clip"]["people"] = {}
+    r = c.post("/api/jobs", json=place).json()
+    assert "picks" not in r["params"]["motion"]  # nobody found yet: by words, as before

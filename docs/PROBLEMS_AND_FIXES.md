@@ -57,6 +57,16 @@ Status: **fixed** unless marked **open**. The open ones are collected at the end
   appeared, and a car that drives off stayed parked. *Fix:* Restyle became video to video (Wan VACE with a
   depth map of every frame), in chunks anchored on the previous chunk's last frames, so later events
   survive and the joins don't jump.
+- **Swap animated one edited still too, and lost the same things:** sunglasses taken out and put on never
+  appeared, a car that drives off stayed parked, the jeans changed along with the shirt, and a phone held to
+  the camera became a glass shard. *Fix:* Swap runs on SCAIL-2 like Recast. An outfit swap recasts the
+  performer as themselves in the new outfit, in the clip's place, so the clip drives every frame; a place
+  swap animates their edited still in the new place.
+- **Swap invented trousers** (black in an outfit swap, red in a place swap) because the edit sees only the
+  first frame, where the selfie hides them. *Fix:* the vision model reads the clothes below the waist from
+  four moments of the clip, and those words go into the edit and the render.
+- **A held product showed only while its hand stayed in view,** and it could not survive the move above.
+  *Fix:* Product in hand was removed; Swap changes the outfit or the place.
 - **Depth can't see small things against the body,** so the sunglasses still vanished. *Fix:* the clip
   reader looks at four moments of the clip and names what a performer puts on, takes off or picks up. The
   visitor can edit that line before rendering.
@@ -74,6 +84,9 @@ Status: **fixed** unless marked **open**. The open ones are collected at the end
   each, and the chosen masks start SAM3's video tracker with no words, so two people dressed alike are still
   told apart (`recast/people.py`, `web/src/components/PeoplePicker.tsx`).
 - **SAM3 found only one person per prompt.** *Fix:* its count syntax, `person:8, animal:4`.
+- **Swap has no picker step, and its reader described a pedestrian in the background.** *Fix:* Swap
+  chooses the performer itself: the biggest person for an outfit; for a place, everyone at least a quarter
+  of the biggest one's size, up to two.
 - **The clip reader described the person next to the chosen one,** then a walker in the background. *Fix:*
   the reader sees the start frame with only the other detected people greyed out, and is told how many it
   should see. Greying out everything but the chosen ones hid what they touch (a dog's paws on a keyboard
@@ -132,6 +145,14 @@ colour, and a white studio came back grey.
 - **That progress could spin forever** when the page's first read landed before the request to write the
   words. *Fix:* the page waits for the words themselves, not a "describing" flag, and gives up after three
   minutes with a box to type in.
+- **"Who is this?" read like a caption,** inviting a name ("my friend Raj") or an action ("dancing"), though
+  these words shape how the character is drawn and the clip decides the moves. *Fix:* the box is labelled
+  "How they look in the video", with an example, and its help says the video draws them from the photo and
+  these words, without names or actions. Outfits and products get the same wording.
+- **"How your video will start" promised something the engines don't do.** The preview picture is a
+  reference for the look: SCAIL-2 re-poses its characters to the clip, and VACE takes only its style while
+  the clip's depth shapes every frame. *Fix:* it is labelled "The look your video will have", and the page
+  says moves, poses and framing come from the clip.
 - **The step bar scrolled sideways on a phone.** *Fix:* tighter spacing at phone width, checked at 390 px.
 - **"We couldn't look for people in this frame"** appeared when the GPU machine had restarted and the API
   proxy with it. *Fix:* the error reads as a sentence with Try again, and "Try again" now really looks again

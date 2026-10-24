@@ -47,7 +47,7 @@ export interface PeopleEntry {
   error?: string; // ready but nobody could be looked for
 }
 
-export type ImageRole = "character" | "outfit" | "product";
+export type ImageRole = "character" | "outfit";
 
 /** A ready-made motion a visitor can use without filming anything. */
 export interface MotionPreset {
@@ -87,7 +87,6 @@ export interface JobParams {
   /** One per performer, or none. With two performers: [the one on the picture's left, the one on its right]. */
   characters: CharacterRef[];
   outfit?: { upload_id: string; text: string };
-  prop?: { upload_id: string; text: string };
   style?: string;
   place: { mode: PlaceMode; text?: string; upload_id?: string };
   finish: "480p" | "720p" | "1080p";

@@ -276,3 +276,30 @@ say what isn't there; "no glasses" only adds the word.
   render prompt; the character instruction now also says never an object beside them.
 - Same clip, pick and seed, new words "middle-aged Black man with short dark hair, wearing a red, blue, and
   white racing suit with a V-shaped emblem on the chest": the sunglasses come and go on time, no helmet.
+
+## Swap moved onto SCAIL-2 (2026-10-24)
+
+Swap used to animate one edited still, like the old Restyle, and lost the same things on the street clip:
+the sunglasses never appeared, the car stayed parked, the jeans changed with the shirt, and a phone held to
+the camera became a glass shard. Swap now runs on SCAIL-2 like Recast.
+
+- **Outfit:** replacement mode in the clip's place; the reference is the performer's own first frame
+  with the outfit edited in, and the words are "the same person as in the video, now wearing X, with
+  {their lower clothes}". The clip drives every frame.
+- **Place:** animation mode with the edited still in the new place.
+- What went wrong on the way, and the fix for each:
+  - The outfit edit reframed him and invented black trousers. Pose words are no longer sent for an outfit
+    swap, and the vision model reads what he wears below the waist from four moments of the clip ("blue
+    jeans"); that goes into the edit and the render words.
+  - The place swap gave him red trousers: fixed by the same lower-clothes words.
+  - The clip reader described a pedestrian in the background. Swap has no picker step, so the performer is
+    now chosen automatically: the biggest person for an outfit; for a place, everyone at least a quarter of
+    the biggest one's size, up to two.
+
+| Swap (street clip, through the app) | Result |
+|---|---|
+| Outfit | his jeans kept, sunglasses taken out and put on on time, the car drives off |
+| Place: "a snowy mountain road" | same man and shirt, jeans kept, sunglasses taken out and put on on time; render 525 s |
+
+Product in hand was removed: it showed only while its hand stayed in view, and the move above can't keep
+an object the clip doesn't have.

@@ -15,7 +15,7 @@ const LENGTHS: Length[] = [5, 10, 15, 20];
 const MODES: [Mode, string, string][] = [
   ["recast", "Recast", "Someone else performs your moves: a person, a mascot, an animal."],
   ["restyle", "Restyle", "Your video, redrawn in a look: anime, toy, pixel art and more."],
-  ["swap", "Swap", "You stay you. Change one thing: the outfit, a product in hand, or the place."],
+  ["swap", "Swap", "You stay you. Change one thing: your outfit or the place."],
 ];
 
 const MAX_PICKS = 2;
@@ -38,14 +38,13 @@ function autoPicks(list: Person[]): number[] {
   return clear.length <= MAX_PICKS ? clear.map((p) => p.id) : [];
 }
 interface CharSlot { upload: Upload; text: string; keepOutfit: boolean }
-type SwapWhat = "outfit" | "product" | "place";
+type SwapWhat = "outfit" | "place";
 interface Change {
   swap: SwapWhat;
   characters: (CharSlot | undefined)[]; // [only] or [left, right]
   style?: string;
   place: { mode: PlaceMode; text: string; upload?: Upload };
   outfit?: { upload: Upload; text: string };
-  prop?: { upload: Upload; text: string };
   finish: JobParams["finish"];
   audio: JobParams["audio"];
 }
@@ -199,7 +198,7 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
 }
 
 /** Looks for everyone in the clip's start frame once a clip is in. Recast shows them to choose who is replaced;
- *  Swap (show=false) only keeps the count, since an outfit or a product needs exactly one person. */
+ *  Swap (show=false) only keeps the count, since an outfit needs exactly one person. */
 function WhoToReplace({ upload, start, show, motion, setMotion }: {
   upload: Upload; start: number; show: boolean; motion: Motion; setMotion: React.Dispatch<React.SetStateAction<Motion>>;
 }) {
@@ -285,7 +284,7 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
   const onePerson = found === undefined || found === 1;
   const slots = change.characters.slice(0, performers);
   const filled = slots.filter((c): c is CharSlot => !!c);
-  // A held product or a garment needs one person with hands; say why instead of hiding it.
+  // A garment needs one person; say why instead of hiding it.
   const swap: SwapWhat = !onePerson && change.swap !== "place" ? "place" : change.swap;
 
   const placeModes: [PlaceMode, string][] = mode === "recast"
@@ -299,7 +298,6 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
     : placeModes.some(([m]) => m === change.place.mode) ? change.place : { ...change.place, mode: fallback };
   const style = mode === "swap" ? undefined : change.style;
   const outfit = mode === "swap" && swap === "outfit" ? change.outfit : undefined;
-  const prop = mode === "swap" && swap === "product" ? change.prop : undefined;
   const characters = mode === "recast" ? filled : [];
 
   const placeOk = (place.mode !== "describe" || place.text.trim().length > 2) && (place.mode !== "image" || !!place.upload);
@@ -307,7 +305,6 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
     ? filled.length === (two ? 2 : 1) && filled.every((c) => c.text.trim().length > 2) && placeOk
     : mode === "restyle" ? !!style
     : swap === "outfit" ? !!outfit && outfit.text.trim().length > 2
-    : swap === "product" ? !!prop && prop.text.trim().length > 2
     : place.mode !== "keep" && placeOk;
   const missing = mode === "recast" ? (two ? "Add a character for each performer." : "Add a character image.")
     : mode === "restyle" ? "Pick a look." : swap === "place" ? "Say where to go." : `Add the ${swap} and say what it is.`;
@@ -331,7 +328,6 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
         style,
         place: { mode: place.mode, text: place.text || undefined, upload_id: place.upload?.id },
         outfit: outfit && { upload_id: outfit.upload.id, text: outfit.text },
-        prop: prop && { upload_id: prop.upload.id, text: prop.text },
         finish: change.finish,
         audio: change.audio,
       };
@@ -402,10 +398,10 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
         <SectionTitle step="Step 2" title="What do you swap?" hint="You stay you. One thing changes; the rest is redrawn to match your clip." />
         <Card className="space-y-5 p-5">
           <Segmented label="" value={swap}
-            options={[["outfit", "Outfit"], ["product", "Product in hand"], ["place", "Place"]]}
+            options={[["outfit", "Outfit"], ["place", "Place"]]}
             onChange={(v) => setChange({ ...change, swap: v as SwapWhat })} />
           {!onePerson && swap === "place" && change.swap !== "place" && (
-            <p className="text-sm text-ink-500">Outfit and product swaps need one person in the clip; we found {found} in your first frame. A place swap works with any number.</p>
+            <p className="text-sm text-ink-500">An outfit swap needs one person in the clip; we found {found} in your first frame. A place swap works with any number.</p>
           )}
           {swap === "outfit" && <>
             <ImagePick label="Outfit image" image={change.outfit?.upload} hint="A product photo of the garment works best."
@@ -413,19 +409,6 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
               onClear={() => setChange({ ...change, outfit: undefined })} />
             {change.outfit && <ItemText role="outfit" upload={change.outfit.upload} value={change.outfit.text}
               onChange={(t) => setChange({ ...change, outfit: { ...change.outfit!, text: t } })} />}
-          </>}
-          {swap === "product" && <>
-            <ImagePick label="Product image" image={change.prop?.upload} hint="A clean product photo."
-              onPick={(u) => setChange({ ...change, prop: { upload: u, text: change.prop?.text ?? "" } })}
-              onClear={() => setChange({ ...change, prop: undefined })} />
-            {change.prop && <>
-              <ItemText role="product" upload={change.prop.upload} value={change.prop.text}
-                onChange={(t) => setChange({ ...change, prop: { ...change.prop!, text: t } })} />
-              <p className="rounded-xl bg-warn/10 px-4 py-3 text-sm text-warn">
-                We put it in the hand your performer keeps in view. A held product shows only while that hand is
-                in shot; if it leaves the frame, the product comes and goes with it.
-              </p>
-            </>}
           </>}
           {swap === "place" && placeEditor}
         </Card>
@@ -498,10 +481,10 @@ export function PreviewStep({ job: first, onBack, backLabel = "Change choices" }
       <SectionTitle step="Step 3" title="Does this look right?"
         hint={cast
           ? "Your clip stays as filmed: its room, light and objects. Only the performers are replaced, left to right, by these characters. Check the order before a render is spent. Previews are free."
-          : "We redrew the first frame of your clip with your changes. The whole video is animated from this one still, so check it here, before a render is spent. Previews are free."} />
+          : "This picture sets the look: who appears, what they wear, the style and the place. Moves, poses and framing come from your clip, so the video won't start exactly like this picture. Check the look before a render is spent. Previews are free."} />
       <div className="grid grid-cols-2 gap-4">
         <Frame label={job.params.motion.picks?.length ? "Who you chose, in your first frame" : "What you filmed (first frame)"} src={job.preview?.frame_url} loading={matching && !job.preview} aspect={job.aspect} />
-        <Frame label={cast ? "Who replaces them, left to right" : "How your video will start"} src={job.preview?.reference_url}
+        <Frame label={cast ? "Who replaces them, left to right" : "The look your video will have"} src={job.preview?.reference_url}
           loading={matching} accent aspect={cast ? [1, 1] : job.aspect} />
       </div>
       {job.preview && !matching && job.state !== "failed" && <p className="mt-4 text-sm text-ink-300">{job.preview.prompt_summary}</p>}
@@ -618,7 +601,7 @@ function Summary({ mode, motion, change, rendersLeft }: { mode: Mode; motion: Mo
     } else if (mode === "restyle") {
       r.push(["Look", change.style ? styles.data?.find((s) => s.key === change.style)?.name ?? change.style : "Not chosen"]);
     } else {
-      r.push(["Swap", change.swap === "outfit" ? change.outfit?.text || "Outfit" : change.swap === "product" ? change.prop?.text || "Product" : placeLabel]);
+      r.push(["Swap", change.swap === "outfit" ? change.outfit?.text || "Outfit" : placeLabel]);
     }
     r.push(["Quality", change.finish === "480p" ? "480p native" : `${change.finish} (upscaled)`]);
     return r;
@@ -710,12 +693,12 @@ function CharacterPick({ who, slot, onChange }: { who: React.ReactNode; slot?: C
         onClear={() => onChange(undefined)} />
       {slot && (
         <>
-          <TextField label="Who is this?" placeholder="Face, hair and clothes, in a few words"
+          <TextField label="How they look in the video" placeholder="e.g. young woman, long red hair, green hoodie, round glasses"
             value={slot.text} onChange={(t) => onChange({ ...slot, text: t })}
             busy={writing ? "Looking at the picture: face, hair and clothes…" : undefined}
             help={writing ? "You can edit the words once they're written. This takes about half a minute."
-              : failed ? "We couldn't read the picture. Describe the face, hair and clothes in a few words."
-              : "Written from the picture. Edit it if anything is wrong: the result follows these words."} />
+              : failed ? "We couldn't read the picture. The video draws them from the photo and these words: describe their face, hair and clothes."
+              : "Written from the picture. The video draws them from the photo and these words, so fix anything wrong. Their moves come from your clip: leave out names and actions."} />
           <label className="flex items-start gap-3 text-sm text-ink-300">
             <input type="checkbox" checked={slot.keepOutfit} onChange={(e) => onChange({ ...slot, keepOutfit: e.target.checked })}
               className="mt-1 accent-[var(--color-accent)]" />
@@ -732,12 +715,12 @@ function CharacterPick({ who, slot, onChange }: { who: React.ReactNode; slot?: C
 function ItemText({ role, upload, value, onChange }: { role: ImageRole; upload: Upload; value: string; onChange: (t: string) => void }) {
   const { writing, failed } = useAutoText(upload, role, value, onChange);
   return (
-    <TextField label="What is it?" placeholder="What it is, colour, material"
+    <TextField label="How it looks in the video" placeholder={role === "outfit" ? "e.g. a red leather biker jacket with silver zips" : "e.g. a green glass bottle with a white label"}
       value={value} onChange={onChange}
       busy={writing ? `Looking at the picture: what the ${role} is, its colour and material…` : undefined}
       help={writing ? "You can edit the words once they're written. This takes about half a minute."
-        : failed ? "We couldn't read the picture. Say what it is, its colour and material."
-        : "Written from the picture. Edit it if it's wrong."} />
+        : failed ? "We couldn't read the picture. The video draws it from the photo and these words: say what it is, its colour and material."
+        : "Written from the picture. The video draws it from the photo and these words, so fix anything wrong."} />
   );
 }
 
