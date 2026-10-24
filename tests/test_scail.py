@@ -124,3 +124,17 @@ def test_keeping_the_clip_adds_the_two_masks():
     assert scail.KEEP_OTHERS_NODE in g
     with pytest.raises(scail.ScailError):  # another place has no clip to keep
         scail.build(_p(people=1, track="", picks=["pick0.png"], replace=False, keep_points=[[[1, 1]]]))
+
+
+def test_placed_sheet_puts_each_character_where_their_performer_stands(tmp_path):
+    from PIL import Image
+    a, b = tmp_path / "a.png", tmp_path / "b.png"
+    Image.new("RGB", (100, 200), (255, 0, 0)).save(a)
+    Image.new("RGB", (100, 200), (0, 0, 255)).save(b)
+    # the right performer is listed first: the sheet still goes left to right, like the page and the masks
+    boxes = [(0.5, 0.1, 0.2, 0.8), (0.25, 0.2, 0.2, 0.8)]
+    out = Image.open(scail.placed_sheet([a, b], boxes, (200, 100), tmp_path / "sheet.png", 0x808080, scale=1))
+    assert out.size == (200, 100)  # the clip's shape
+    assert out.getpixel((70, 60)) == (255, 0, 0)  # the first character on the left performer
+    assert out.getpixel((120, 60)) == (0, 0, 255)  # the second on the right one
+    assert out.getpixel((5, 5)) == (128, 128, 128)  # the room's colour around them

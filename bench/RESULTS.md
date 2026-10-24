@@ -303,3 +303,27 @@ the camera became a glass shard. Swap now runs on SCAIL-2 like Recast.
 
 Product in hand was removed: it showed only while its hand stayed in view, and the move above can't keep
 an object the clip doesn't have.
+
+## Who becomes whom follows the reference's layout (2026-10-24)
+
+A group of seven in a room; the two in the middle chosen, recast in the clip's place as a man in a hard hat
+and a racing driver. SCAIL-2 drew the hard hat on the person at the far left and the racer on the two at
+the right, and left the chosen two almost as filmed; putting the bystanders back as filmed then covered the
+characters, so the video showed nobody recast. One 5 s chunk per test, same seed:
+
+| Test | Who got the characters |
+|---|---|
+| Tracking alone (SAM3 track and the coloured masks, saved) | the right two, all 10 s, coloured to match the reference |
+| As shipped: the characters side by side on a square sheet, "On the left… On the right…" | the people at the frame's edges |
+| Same sheet; "In the middle of the group, on the left/right…", "everyone else stays as in the video" | the people at the frame's edges |
+| **Each cut-out placed where its performer stands, on a sheet the clip's shape** | **the chosen two; everyone else as filmed** |
+
+The masks and the words don't decide it; where the characters sit on the reference does. The square sheet
+worked on every two-performer clip before because those performers stood left and right. The sheet is now
+`scail.placed_sheet` whenever performers are chosen: each cut-out fitted to its performer's box,
+top-aligned. Through the app, the same clip and picks: right people, 384 s for 5 s. Re-run on the new
+sheet: the dog-and-cat duo is unchanged (378 s), and the one man chosen in a crowd gets the character's
+face and glasses, which no longer show up on the man in front of him (398 s).
+
+Also: a character's SAM3 mask carried a loose strip of trousers from the bottom of their photo, which
+floated under them on the reference. Pieces under 15% of the biggest part are now dropped.

@@ -179,6 +179,9 @@ def _people_dir(uid: str, key: str) -> Path:
     return DATA / "uploads" / uid / f"people_{key}"
 
 
+FIND_RETRIES = (5, 20)  # seconds before each automatic second and third look
+
+
 def find_people(uid: str, arg: tuple) -> None:
     """Everyone in the clip's start frame, one mask each, for the visitor to choose who is recast."""
     from recast import runner
@@ -188,19 +191,27 @@ def find_people(uid: str, arg: tuple) -> None:
     d = _people_dir(uid, key)
     d.mkdir(parents=True, exist_ok=True)
     entry: dict = {"state": "ready", "people": []}
-    try:  # this runs on the GPU worker thread: nothing here may raise past it
-        frame = media.frame_at(_upload_path(uid, "video"), d / "frame.png", layout=layout, start=start, box=box)
-        entry["frame_url"] = _url(frame)
-        with _comfy() as client:
-            gjob = runner.submit_graph(
-                client, lambda: people.build_detect(client.assets.from_file(frame), prefix=f"recast/people_{uid}"),
-                d / "detect_submission.json")
-            gjob = runner.follow(gjob)
-            files = runner.download(gjob, d / "detected", node_id=people.FINAL_NODE)
-        entry["people"] = [{**vars(f), "mask_url": _url(d / f.mask)} for f in people.read(sorted(files), d)]
-    except Exception:  # nobody found reads as "we couldn't find anyone", never a stuck spinner
-        log.exception("finding people in %s failed", uid)
-        entry["error"] = "We couldn't look for people in this frame. Try again, or pick another start point."
+    for attempt in range(len(FIND_RETRIES) + 1):
+        try:  # this runs on the GPU worker thread: nothing here may raise past it
+            frame = media.frame_at(_upload_path(uid, "video"), d / "frame.png", layout=layout, start=start, box=box)
+            entry["frame_url"] = _url(frame)
+            with _comfy() as client:
+                gjob = runner.submit_graph(
+                    client, lambda: people.build_detect(client.assets.from_file(frame), prefix=f"recast/people_{uid}"),
+                    d / "detect_submission.json")
+                gjob = runner.follow(gjob)
+                files = runner.download(gjob, d / "detected", node_id=people.FINAL_NODE)
+            entry["people"] = [{**vars(f), "mask_url": _url(d / f.mask)} for f in people.read(sorted(files), d)]
+            entry.pop("error", None)
+            break
+        except Exception:  # nobody found reads as "we couldn't find anyone", never a stuck spinner
+            log.exception("finding people in %s failed (attempt %d)", uid, attempt + 1)
+            entry["error"] = "We couldn't look for people in this frame. Try again, or pick another start point."
+            if attempt < len(FIND_RETRIES):
+                # A short outage (a model folder that briefly didn't answer, the GPU machine restarting) heals by
+                # itself: look again with a fresh submission before the visitor sees an error.
+                (d / "detect_submission.json").unlink(missing_ok=True)
+                time.sleep(FIND_RETRIES[attempt])
     with LOCK:
         u.setdefault("people", {})[key] = entry
         _write_json(DATA / "uploads" / uid / "upload.json", u)
@@ -554,7 +565,14 @@ def run_preview(j: dict, seed: int) -> None:
         for i, c in enumerate(chars):
             whole = media.clean_image(_upload_path(c["upload_id"], "image"), d / f"cast_{i}.png")
             photos.append(_cut_out(c["upload_id"], whole, d / f"cast_{i}_cut.png", colour) or whole)
-        ref = scail.reference_sheet(photos, d / "reference.png")
+        picks = p["motion"].get("picks") or []
+        found = people.load(DATA / work["people_dir"]) if picks and work.get("people_dir") else []
+        boxes = [f.box for f in found if f.id in picks]
+        if len(boxes) == len(photos):  # each character where their performer stands (scail.placed_sheet)
+            dv = media.probe(d / work["drive"])
+            ref = scail.placed_sheet(photos, boxes, (dv.width, dv.height), d / "reference.png", colour)
+        else:
+            ref = scail.reference_sheet(photos, d / "reference.png")
         kind = "cast"
     elif engine and p["place"]["mode"] == "character" and len(chars) == 1:  # their photo, as it is, is the start
         src = media.clean_image(_upload_path(chars[0]["upload_id"], "image"), d / "character_full.png")

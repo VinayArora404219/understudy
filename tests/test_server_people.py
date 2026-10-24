@@ -98,3 +98,32 @@ def test_swap_chooses_its_performer_from_the_people_found(app):
     app.UPLOADS["up_clip"]["people"] = {}
     r = c.post("/api/jobs", json=place).json()
     assert "picks" not in r["params"]["motion"]  # nobody found yet: by words, as before
+
+
+def test_a_short_outage_is_retried_before_the_visitor_sees_an_error(app, monkeypatch, tmp_path):
+    import contextlib
+
+    from recast import runner
+
+    calls = []
+
+    def submit(client, make, state):
+        calls.append(state)
+        if len(calls) == 1:  # the first look hits a model folder that didn't answer
+            raise RuntimeError("Prompt outputs failed validation")
+        return "job"
+
+    monkeypatch.setattr(app, "FIND_RETRIES", (0, 0))
+    monkeypatch.setattr(app, "_comfy", contextlib.nullcontext)
+    monkeypatch.setattr(app.media, "frame_at", lambda src, dst, **kw: dst.write_bytes(b"x") and dst)
+    monkeypatch.setattr(runner, "submit_graph", submit)
+    monkeypatch.setattr(runner, "follow", lambda j: j)
+    monkeypatch.setattr(runner, "download", lambda j, d, node_id: [])
+    app.find_people("up_clip", ("0.00_portrait", 0.0, "portrait", None))
+    entry = app.UPLOADS["up_clip"]["people"]["0.00_portrait"]
+    assert len(calls) == 2 and "error" not in entry and entry["state"] == "ready"
+
+    calls.clear()
+    monkeypatch.setattr(runner, "submit_graph", lambda *a: calls.append(1) or (_ for _ in ()).throw(RuntimeError("down")))
+    app.find_people("up_clip", ("0.00_portrait", 0.0, "portrait", None))
+    assert len(calls) == 3 and "error" in app.UPLOADS["up_clip"]["people"]["0.00_portrait"]  # then it says so

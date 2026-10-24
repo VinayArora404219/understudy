@@ -223,6 +223,31 @@ def reference_sheet(characters: list[Path], dst: Path, *, height: int = 1024) ->
     return Path(dst)
 
 
+def placed_sheet(characters: list[Path], boxes: list[tuple[float, float, float, float]], size: tuple[int, int],
+                 dst: Path, colour: int, *, scale: int = 2) -> Path:
+    """All identities on one picture the clip's shape, each where its performer stands in the start frame:
+    fitted to that performer's box (x, y, width, height as fractions), top-aligned, on the room's colour.
+
+    The coloured masks alone don't decide who becomes whom. With two performers chosen in the middle of seven
+    people and the characters side by side on a square sheet, SCAIL-2 drew them on the people at the frame's
+    edges, whatever the prompt said; placed like this, the same seed put each on their own performer
+    (bench/RESULTS.md, "Who becomes whom follows the reference's layout")."""
+    from PIL import Image
+
+    W, H = size[0] * scale, size[1] * scale
+    sheet = Image.new("RGB", (W, H), ((colour >> 16) & 255, (colour >> 8) & 255, colour & 255))
+    for c, (x, y, w, h) in zip(characters, sorted(boxes, key=lambda b: b[0] + b[2] / 2)):  # left to right
+        img = Image.open(c).convert("RGB")
+        k = min(PLACED_WIDE * w * W / img.width, h * H / img.height)
+        img = img.resize((max(1, round(img.width * k)), max(1, round(img.height * k))), Image.LANCZOS)
+        sheet.paste(img, (round((x + w / 2) * W - img.width / 2), round(y * H)))
+    sheet.save(dst)
+    return Path(dst)
+
+
+PLACED_WIDE = 1.15  # a cut-out may be this much wider than its performer's box (arms held out in the photo)
+
+
 def track_words(whats: list[str], subject: str) -> str:
     """What SAM3 should follow: the performers as the clip reader named them ("dog, cat"), once each.
 

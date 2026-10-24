@@ -72,3 +72,22 @@ def test_the_character_is_cut_out_of_their_photo_on_the_rooms_colour(tmp_path):
     assert out.getpixel((1, 1)) == (0xEE, 0xEE, 0xEE)  # the backdrop is the room's colour
     assert (255, 255, 0) not in {px for _, px in out.getcolors(10000)}  # no helmet
     assert people.cut_out(tmp_path / "photo.png", [], tmp_path, tmp_path / "none.png", 0) is None
+
+
+def test_loose_pieces_of_a_characters_mask_are_left_out(tmp_path):
+    from PIL import Image
+
+    from recast import people
+
+    photo = Image.new("RGB", (100, 100), (0, 0, 255))
+    photo.paste((255, 0, 0), (20, 10, 60, 70))  # the character
+    photo.paste((0, 255, 0), (20, 94, 60, 98))  # a strip of trousers at the photo's bottom edge
+    photo.save(tmp_path / "photo.png")
+    m = Image.new("L", (100, 100), 0)
+    m.paste(255, (20, 10, 60, 70))
+    m.paste(255, (20, 94, 60, 98))
+    m.save(tmp_path / "person_1.png")
+    found = [people.Person(1, (0.2, 0.1, 0.4, 0.88), 0.256, 0.4, "person_1.png")]
+    out = Image.open(people.cut_out(tmp_path / "photo.png", found, tmp_path, tmp_path / "cut.png", 0xEEEEEE))
+    assert out.size == (46, 66)  # cropped round the character alone
+    assert (0, 255, 0) not in {px for _, px in out.getcolors(10000)}

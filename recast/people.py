@@ -116,6 +116,7 @@ def write_picks(people: list[Person], ids: list[int], src: Path, dst: Path, size
 CROP_PAD = 0.12
 CUT_PAD = 0.05  # of the cut-out's longer side, around the character
 SEAL = 0.18  # gaps inside a character narrower than this share of their width are closed
+PIECE = 0.15  # a loose piece of a mask smaller than this share of its biggest part is dropped
 
 
 def cut_out(image: Path, people: list[Person], src: Path, dst: Path, colour: int) -> Path | None:
@@ -132,6 +133,12 @@ def cut_out(image: Path, people: list[Person], src: Path, dst: Path, colour: int
     img = Image.open(image).convert("RGB")
     W, H = img.size
     inside = np.asarray(Image.open(src / main.mask).convert("L").resize((W, H), Image.NEAREST)) > 127
+    # SAM3's mask can carry loose pieces well away from the body (a strip of trousers at the photo's bottom
+    # edge), which come out as floating shapes on the reference: keep only the parts of a real size.
+    count, parts, stats, _ = cv2.connectedComponentsWithStats(inside.astype(np.uint8), connectivity=8)
+    if count > 2:
+        sizes = stats[1:, cv2.CC_STAT_AREA]
+        inside = np.isin(parts, 1 + np.flatnonzero(sizes >= PIECE * sizes.max()))
     # Something in front of them (a microphone on a stand) leaves a hole in their mask, which would become a
     # backdrop-coloured shape on their chest: close gaps narrower than SEAL of their width and paint them in
     # from what surrounds them.
@@ -143,10 +150,10 @@ def cut_out(image: Path, people: list[Person], src: Path, dst: Path, colour: int
         img = Image.fromarray(cv2.inpaint(np.asarray(img), hole, 7, cv2.INPAINT_TELEA))
     m = Image.fromarray(whole.astype(np.uint8) * 255).filter(ImageFilter.GaussianBlur(1.5))
     back = Image.new("RGB", (W, H), ((colour >> 16) & 255, (colour >> 8) & 255, colour & 255))
-    x, y, w, h = main.box
-    pad = CUT_PAD * max(w * W, h * H)
-    box = (max(0, round(x * W - pad)), max(0, round(y * H - pad)),
-           min(W, round((x + w) * W + pad)), min(H, round((y + h) * H + pad)))
+    ys, xs = np.nonzero(whole)
+    x0, y0, x1, y1 = xs.min(), ys.min(), xs.max() + 1, ys.max() + 1  # round what is kept
+    pad = CUT_PAD * max(x1 - x0, y1 - y0)
+    box = (max(0, round(x0 - pad)), max(0, round(y0 - pad)), min(W, round(x1 + pad)), min(H, round(y1 + pad)))
     Image.composite(img, back, m).crop(box).save(dst)
     return dst
 

@@ -83,6 +83,11 @@ Status: **fixed** unless marked **open**. The open ones are collected at the end
   man on each read. *Fix:* the visitor taps who to replace. SAM3 finds everyone in the start frame, one mask
   each, and the chosen masks start SAM3's video tracker with no words, so two people dressed alike are still
   told apart (`recast/people.py`, `web/src/components/PeoplePicker.tsx`).
+- **Two people chosen in the middle of a group were not the ones recast.** The characters went to the
+  people at the frame's edges, and putting the bystanders back then covered them, so nobody looked recast.
+  The tracking and the masks were right, and rewording the prompt changed nothing: SCAIL-2 follows where
+  the characters sit on the reference. *Fix:* the reference is the clip's shape, with each character placed
+  where their performer stands (`scail.placed_sheet`).
 - **SAM3 found only one person per prompt.** *Fix:* its count syntax, `person:8, animal:4`.
 - **Swap has no picker step, and its reader described a pedestrian in the background.** *Fix:* Swap
   chooses the performer itself: the biggest person for an outfit; for a place, everyone at least a quarter
@@ -133,7 +138,7 @@ colour, and a white studio came back grey.
   beside him, the whole photo was the reference, and the words written for him said "no glasses… with
   matching helmet". A prompt can't say what isn't there; "no glasses" only adds the word. *Fix:* the
   character is cut out of their photo onto the room's colour (`people.cut_out`); anything in front of them,
-  like a microphone, leaves a hole that is closed and painted in from around it. "No X", "without X" and
+  like a microphone, leaves a hole that is closed and painted in from around it, and loose pieces of their mask (a strip of trousers at the photo's edge) are dropped. "No X", "without X" and
   "with no X" are removed from the words and from the render prompt, and the vision model is told to
   describe only what is on the body. Re-rendered with the same seed: the sunglasses come and go on time.
 
@@ -156,7 +161,8 @@ colour, and a white studio came back grey.
 - **The step bar scrolled sideways on a phone.** *Fix:* tighter spacing at phone width, checked at 390 px.
 - **"We couldn't look for people in this frame"** appeared when the GPU machine had restarted and the API
   proxy with it. *Fix:* the error reads as a sentence with Try again, and "Try again" now really looks again
-  after a miss.
+  after a miss. A model folder on the GPU machine that briefly stopped answering failed it once more; the
+  server now looks twice more by itself, 5 and 20 s later, before showing the error.
 
 ## 8. Plumbing
 
