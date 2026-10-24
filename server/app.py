@@ -33,7 +33,7 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
-from recast import crop, describe, graph, media, pose, prompts, recipe, scail, styles, vace
+from recast import composite, crop, describe, graph, keep, media, people, pose, prompts, recipe, scail, styles, vace
 from recast import reference as reflib
 
 log = logging.getLogger("recast.server")
@@ -133,6 +133,8 @@ def _load() -> None:
         (DATA / sub).mkdir(parents=True, exist_ok=True)
     for p in (DATA / "uploads").glob("*/upload.json"):
         u = json.loads(p.read_text())
+        # people still being found when the server stopped: the page asks again
+        u["people"] = {k: v for k, v in (u.get("people") or {}).items() if v.get("state") == "ready"}
         UPLOADS[u["id"]] = u
     for p in (DATA / "jobs").glob("*/job.json"):
         j = json.loads(p.read_text())
@@ -159,6 +161,51 @@ def _upload_path(uid: str, kind: str) -> Path:
     return raw.parent / "image.png" if kind == "image" else raw
 
 
+def _clip_layout(uid: str, shape: str | None) -> tuple[str, tuple | None]:
+    """The delivered shape and the picture inside any letterbox bars, the same for every use of a clip."""
+    src = _upload_path(uid, "video")
+    up = UPLOADS[uid]
+    found = up["_box"] if "_box" in up else media.content_box(src)  # uploads from before bar detection
+    box = tuple(found) if found else None
+    shape = shape or "auto"
+    return (shape if shape in graph.SIZES else media.layout_for(*box[:2]) if box else media.probe(src).layout), box
+
+
+def _people_key(start: float, layout: str) -> str:
+    return f"{float(start):.2f}_{layout}"
+
+
+def _people_dir(uid: str, key: str) -> Path:
+    return DATA / "uploads" / uid / f"people_{key}"
+
+
+def find_people(uid: str, arg: tuple) -> None:
+    """Everyone in the clip's start frame, one mask each, for the visitor to choose who is recast."""
+    from recast import runner
+
+    key, start, layout, box = arg
+    u = UPLOADS[uid]
+    d = _people_dir(uid, key)
+    d.mkdir(parents=True, exist_ok=True)
+    entry: dict = {"state": "ready", "people": []}
+    try:  # this runs on the GPU worker thread: nothing here may raise past it
+        frame = media.frame_at(_upload_path(uid, "video"), d / "frame.png", layout=layout, start=start, box=box)
+        entry["frame_url"] = _url(frame)
+        with _comfy() as client:
+            gjob = runner.submit_graph(
+                client, lambda: people.build_detect(client.assets.from_file(frame), prefix=f"recast/people_{uid}"),
+                d / "detect_submission.json")
+            gjob = runner.follow(gjob)
+            files = runner.download(gjob, d / "detected", node_id=people.FINAL_NODE)
+        entry["people"] = [{**vars(f), "mask_url": _url(d / f.mask)} for f in people.read(sorted(files), d)]
+    except Exception:  # nobody found reads as "we couldn't find anyone", never a stuck spinner
+        log.exception("finding people in %s failed", uid)
+        entry["error"] = "We couldn't look for people in this frame. Try again, or pick another start point."
+    with LOCK:
+        u.setdefault("people", {})[key] = entry
+        _write_json(DATA / "uploads" / uid / "upload.json", u)
+
+
 def _prepare(j: dict) -> dict:
     """Trim and normalize the clip and grab its first frame, once per job."""
     work = j.get("_work") or {}
@@ -167,11 +214,7 @@ def _prepare(j: dict) -> dict:
     d, p = _job_dir(j["id"]), j["params"]
     src = _upload_path(p["motion"]["upload_id"], "video")
     info = media.probe(src)
-    up = UPLOADS[p["motion"]["upload_id"]]
-    found = up["_box"] if "_box" in up else media.content_box(src)  # uploads from before bar detection
-    box = tuple(found) if found else None
-    shape = p.get("shape") or "auto"
-    layout = shape if shape in graph.SIZES else media.layout_for(*box[:2]) if box else info.layout
+    layout, box = _clip_layout(p["motion"]["upload_id"], p.get("shape"))
     start = float(p["motion"]["start"])
     usable = info.seconds - start
     if usable < media.MIN_SECONDS:
@@ -184,6 +227,18 @@ def _prepare(j: dict) -> dict:
     frame = _named(media.frame_at(src, d / "frame.png", layout=layout, start=start, box=box), "frame")
     work = {"drive": drive.name, "frame": frame.name, "layout": layout, "segments": segments,
             "seconds": round(seconds, 2), "has_audio": info.has_audio}
+    picks = p["motion"].get("picks")
+    if picks:  # the chosen performers' start masks, at the size SAM3 tracks the clip in
+        src_dir = _people_dir(p["motion"]["upload_id"], _people_key(start, layout))
+        found_people = people.load(src_dir)
+        dv = media.probe(drive)
+        masks = people.write_picks(found_people, picks, src_dir, d, (dv.width, dv.height))
+        work["picks"] = [_named(m, f"pick{k}").name for k, m in enumerate(masks)]
+        work["others"] = [_named(m, f"other{k}").name for k, m in
+                          enumerate(people.write_others(found_people, picks, src_dir, d, (dv.width, dv.height)))]
+        work["pick_crop"] = list(people.crop_box(found_people, picks))
+        work["people_dir"] = src_dir.relative_to(DATA).as_posix()
+        work["pick_masks"] = [f.mask for f in found_people if f.id in picks]
     _update(j, _work=work)
     return work
 
@@ -242,8 +297,9 @@ def _read_clip(j: dict, work: dict, frame: Path) -> list[describe.Performer]:
     if "performers_seen" in work:
         return [describe.Performer(**x) for x in work["performers_seen"]]
     d = _job_dir(j["id"])
+    ask = describe.prompt_for(len(work["picks"])) if work.get("picks") else describe.PROMPT
     with _comfy() as client:
-        gjob = runner.submit_graph(client, lambda: describe.build(client.assets.from_file(frame),
+        gjob = runner.submit_graph(client, lambda: describe.build(client.assets.from_file(frame), prompt=ask,
                                                                   prefix=f"recast/app_{j['id']}_describe"),
                                    d / "describe_submission.json")
         RUNNING[j["id"]] = gjob
@@ -280,6 +336,76 @@ def _read_scene(j: dict, work: dict) -> str:
     return scene
 
 
+def _chosen_frame(work: dict, d: Path, frame: Path) -> Path:
+    """The start frame with the other people greyed out, cropped around the chosen ones, so the reader's poses
+    are theirs. Measured on the test clips: a crop alone described the man standing next to the one chosen;
+    greying out everything but the chosen also hid what they touch (a dog's "hands on the keyboard" became
+    "hands near the ground"), so only the others go, and the room and props stay."""
+    if not work.get("picks"):
+        return frame
+    from PIL import Image, ImageFilter
+
+    img = Image.open(frame).convert("RGB")
+    W, H = img.size
+    chosen = Image.new("L", (W, H), 0)
+    for name in work["picks"]:
+        chosen.paste(255, mask=Image.open(d / name).convert("L").resize((W, H), Image.NEAREST))
+    chosen = chosen.filter(ImageFilter.MaxFilter(9))  # a little room, so hands and hair edges stay
+    others = Image.new("L", (W, H), 0)
+    src = DATA / work["people_dir"] if work.get("people_dir") else None
+    for f in people.load(src) if src and src.exists() else []:
+        if f.mask not in work.get("pick_masks", []):
+            others.paste(255, mask=Image.open(src / f.mask).convert("L").resize((W, H), Image.NEAREST))
+    hide = Image.composite(Image.new("L", (W, H), 0), others, chosen)  # never grey out the chosen ones
+    shown = Image.composite(Image.new("RGB", (W, H), (128, 128, 128)), img, hide)
+    x, y, w, h = work["pick_crop"]
+    out = d / "frame_chosen.png"
+    shown.crop((round(x * W), round(y * H), round((x + w) * W), round((y + h) * H))).save(out)
+    return out
+
+
+PICKED = (200, 245, 96)  # the page's accent colour
+
+
+def _picked_frame(work: dict, d: Path, frame: Path) -> Path:
+    """The start frame as the preview shows it: the chosen performers outlined, everything else dimmed, so the
+    visitor checks who is replaced next to who replaces them."""
+    if not work.get("picks"):
+        return frame
+    from PIL import Image, ImageChops, ImageFilter
+
+    img = Image.open(frame).convert("RGB")
+    W, H = img.size
+    chosen = Image.new("L", (W, H), 0)
+    for name in work["picks"]:
+        chosen.paste(255, mask=Image.open(d / name).convert("L").resize((W, H), Image.NEAREST))
+    edge = ImageChops.subtract(chosen.filter(ImageFilter.MaxFilter(5)), chosen.filter(ImageFilter.MinFilter(3)))
+    out = Image.composite(img, Image.eval(img, lambda v: v * 2 // 5), chosen)
+    out.paste(PICKED, mask=edge)
+    dst = d / "frame_picked.png"
+    out.save(dst)
+    return _named(dst, "frame_picked")
+
+
+def _cut_out(uid: str, photo: Path, dst: Path, colour: int) -> Path | None:
+    """The character alone from their photo (people.cut_out); the people found are kept per upload."""
+    from recast import runner
+
+    src = _upload_path(uid, "image").parent / "cutout_people"
+    try:
+        if not (src / "people.json").exists():
+            with _comfy() as client:
+                gjob = runner.submit_graph(
+                    client, lambda: people.build_detect(client.assets.from_file(photo), prefix=f"recast/cut_{uid}"),
+                    src.parent / "cutout_submission.json")
+                files = runner.download(runner.follow(gjob), src / "detected", node_id=people.FINAL_NODE)
+            people.read(sorted(files), src)
+        return people.cut_out(photo, people.load(src), src, dst, colour)
+    except Exception:  # the whole photo still works; the cut-out only keeps its other things out
+        log.exception("cutting the character out of %s failed", uid)
+        return None
+
+
 def _seen(found: list[describe.Performer]) -> str:
     where = {"left": " on the left", "right": " on the right", "center": ""}
     return "We read your clip as: " + "; ".join(
@@ -301,13 +427,19 @@ def run_preview(j: dict, seed: int) -> None:
     hand = other_hand = ""
     if chars or item:  # a character or an item needs the clip's pose in words (fix A); a restyle keeps it
         try:
-            found = _read_clip(j, work, frame)
+            found = _read_clip(j, work, _chosen_frame(work, d, frame))
         except Exception:  # the description helps; it must never block a preview
             log.exception("describing %s failed", j["id"])
             found = []
-        problem = describe.mismatch(found, performers=p.get("performers", 1), subject=p["subject"])
+        problem = None if work.get("picks") else describe.mismatch(found, performers=p.get("performers", 1),
+                                                                    subject=p["subject"])
         if problem:
             raise UserError(problem)
+        if work.get("picks") and found:  # chosen in the frame, so nobody said person or animal: the reader does
+            kind = "animal" if all(f.kind == "animal" for f in found) else "person"
+            if kind != p["subject"]:
+                p = {**p, "subject": kind}
+                _update(j, params=p)
         if len(found) == max(1, len(chars)):
             poses = [f.pose for f in found] + [""]
             shots = [f.shot for f in found] + [""]
@@ -329,7 +461,10 @@ def run_preview(j: dict, seed: int) -> None:
         replace = p["place"]["mode"] == "keep"
         engine = {"engine": "scail", "replace": replace, "people": len(chars),
                   "track": scail.track_words([f.find or f.what for f in found], p["subject"]),
-                  "poses": (poses if replace else bodies)[:len(chars)]}
+                  # In the clip's place the clip itself drives every frame, and the reader's first-frame pose
+                  # cost accessories: with it, sunglasses put on mid-clip were missing; without, they came
+                  # back (same seed, private regression clip). Another place is posed by the words, so keeps them.
+                  "poses": [] if replace else bodies[:len(chars)]}
     elif _mode(p) == "restyle":  # video to video: every frame's depth, so later objects and motion survive
         mine = j.get("scene") or {}
         if mine.get("edited"):  # the visitor's own words win over a re-read
@@ -346,9 +481,12 @@ def run_preview(j: dict, seed: int) -> None:
         engine = {"engine": "vace", "scene": scene or "the scene in the video"}
     kind = "still"
     changes = bool(chars or item or p.get("style") or p["place"]["mode"] != "keep")
-    if engine.get("replace"):  # nothing to generate: who replaces whom, their whole photos, left to right
-        photos = [media.clean_image(_upload_path(c["upload_id"], "image"), d / f"cast_{i}.png")
-                  for i, c in enumerate(chars)]
+    if engine.get("replace"):  # nothing to generate: who replaces whom, cut out of their photos, left to right
+        colour = media.edge_colour(frame)  # the room's own colour, so a leak of the backdrop blends in
+        photos = []
+        for i, c in enumerate(chars):
+            whole = media.clean_image(_upload_path(c["upload_id"], "image"), d / f"cast_{i}.png")
+            photos.append(_cut_out(c["upload_id"], whole, d / f"cast_{i}_cut.png", colour) or whole)
         ref = scail.reference_sheet(photos, d / "reference.png")
         kind = "cast"
     elif engine and p["place"]["mode"] == "character" and len(chars) == 1:  # their photo, as it is, is the start
@@ -400,7 +538,8 @@ def run_preview(j: dict, seed: int) -> None:
             cutout_colour=media.edge_colour(room) if mode in ("keep", "image", "character") else reflib.CUTOUT_GREY,
             outfit_text=(p.get("outfit") or {}).get("text", ""), product_text=(p.get("prop") or {}).get("text", ""),
             product_hand=hand if p.get("prop") else "", other_hand=other_hand if p.get("prop") and hand else "",
-            style=p.get("style") or "", subject=p["subject"], scene=scene, background=background,
+            style=p.get("style") or "", scene=scene, background=background,
+            subject=p["subject"] if base == "frame" else reflib.cast_word([c["text"] for c in chars]),
             quality="fast", seed=seed, prefix=f"recast/app_{j['id']}_ref",
             **{k: v.name for k, v in images.items()})
         try:
@@ -435,9 +574,10 @@ def run_preview(j: dict, seed: int) -> None:
     mine = j.get("scene") or {}
     if engine.get("engine") == "vace" and mine.get("edited"):  # edited while the still was being drawn
         engine["scene"] = mine["text"]
+    shown = _picked_frame(work, d, frame)
     _update(j, state="awaiting_approval", error=None,
             _work={**work, "reference": ref.name, "edited": False, **engine},
-            preview={"frame_url": _url(frame), "reference_url": _url(ref), "seed": seed, "kind": kind,
+            preview={"frame_url": _url(shown), "reference_url": _url(ref), "seed": seed, "kind": kind,
                      "prompt_summary": _summary(p), "notes": notes, "seen": seen})
 
 
@@ -453,7 +593,10 @@ def run_render(j: dict, _arg: Any = None) -> None:
             drive=drive.name, reference=ref.name, layout=work["layout"], chunks=work["segments"],
             prompt=scail.prompt([c["text"] for c in chars], work.get("poses") or [], replace=work["replace"],
                                 place=place),
-            track=work["track"], people=work["people"], replace=work["replace"],
+            track=work["track"], people=work["people"], replace=work["replace"], picks=work.get("picks"),
+            keep_points=[[list(pt) for pt in keep.inside_points(d / name)] for name in work["picks"]]
+            if work.get("picks") and work["replace"] else None,
+            others=list(work.get("others") or []) if work.get("picks") and work["replace"] else None,
             seed=p.get("seed") or graph.DEFAULT_SEED, prefix=f"recast/app_{j['id']}")
         engine, steps, models = scail, scail.STEPS, scail.MODELS
     elif work.get("engine") == "vace":
@@ -522,6 +665,10 @@ def _render_and_finish(j, work, d, p, rp, g, ref, drive, engine, steps, models) 
     with _comfy() as client:
         def make():  # uploaded as SDK assets
             rp.reference, rp.drive = client.assets.from_file(ref), client.assets.from_file(drive)
+            if getattr(rp, "picks", None):
+                rp.picks = [client.assets.from_file(d / name) for name in work["picks"]]
+            if getattr(rp, "others", None):
+                rp.others = [client.assets.from_file(d / name) for name in work["others"]]
             return engine.build(rp)
         gjob = runner.submit_graph(client, make, d / f"render_submission_{recipe.graph_sha(g)[:10]}.json")
         RUNNING[j["id"]] = gjob
@@ -533,8 +680,14 @@ def _render_and_finish(j, work, d, p, rp, g, ref, drive, engine, steps, models) 
             return
         _update(j, state="finishing", progress={"stage": "finishing", "eta_seconds": 20})
         files = runner.download(gjob, d / "render", node_id=engine.FINAL_NODE)
+        kept = None
+        if files and getattr(rp, "keep_points", None):
+            kept = [runner.download(gjob, d / "render", node_id=node)[0]
+                    for node in (scail.KEEP_OTHERS_NODE, scail.KEEP_NEW_NODE, scail.KEEP_MASK_NODE)]
     if not files:
         raise RuntimeError("the render finished without a video")
+    if kept:  # everyone not recast, as filmed (recast/keep.py)
+        files = [composite.keep_others(drive, files[0], *kept, d / "render_kept.mp4")]
 
     native = graph.SIZES[work["layout"]]
     if p["audio"] == "mute":
@@ -547,8 +700,14 @@ def _render_and_finish(j, work, d, p, rp, g, ref, drive, engine, steps, models) 
     delivered = f"{w}×{h}" + (" (upscaled)" if short else "")
     compare = media.side_by_side(drive, final, d / "compare.mp4", vertical=work["layout"].startswith("landscape"))
     seconds = round(time.time() - t0, 1)
-    rp.reference, rp.drive = ref.name, drive.name
-    recipe.write(d / "recipe.json", params=rp, g=g, inputs={"reference": ref, "drive": drive},
+    rp.reference, rp.drive = ref.name, drive.name  # SDK assets hold a live client: the recipe names files
+    picks = work.get("picks") or []
+    if getattr(rp, "picks", None):
+        rp.picks = list(picks)
+    if getattr(rp, "others", None):
+        rp.others = list(work["others"])
+    recipe.write(d / "recipe.json", params=rp, g=g,
+                 inputs={"reference": ref, "drive": drive, **{f"pick{k}": d / n for k, n in enumerate(picks)}},
                  outputs={"recast": final, "compare": compare}, job_id=gjob.id, seconds=seconds, models=models)
     if _cancelled(j):
         return
@@ -607,8 +766,8 @@ def describe_upload(uid: str, role: str) -> None:
 def _worker() -> None:
     while True:
         kind, jid, arg = TASKS.get()
-        if kind == "describe_upload":
-            describe_upload(jid, arg)
+        if kind in ("describe_upload", "find_people"):
+            (describe_upload if kind == "describe_upload" else find_people)(jid, arg)
             continue
         j = JOBS.get(jid)
         if j is None or _cancelled(j):
@@ -752,6 +911,29 @@ def describe_upload_request(uid: str, body: dict) -> dict:
     return _public(u)
 
 
+@app.post("/api/uploads/{uid}/people")
+def find_people_request(uid: str, body: dict | None = None) -> dict:
+    """Queue finding everyone in the start frame; the page polls GET /api/uploads/{uid} for people[key]."""
+    body = body or {}
+    u = UPLOADS.get(uid)
+    if u is None or u["kind"] != "video":
+        raise HTTPException(404, "That clip is gone. Upload it again.")
+    start = float(body.get("start") or 0)
+    if start < 0 or (u.get("info") or {}).get("seconds", 1e9) <= start:
+        raise UserError("That start point is outside the clip.")
+    if (body.get("shape") or "auto") not in ("auto", *graph.SIZES):
+        raise UserError("Unknown shape.")
+    layout, box = _clip_layout(uid, body.get("shape"))
+    key = _people_key(start, layout)
+    with LOCK:
+        found = u.setdefault("people", {})
+        if key not in found or (body.get("retry") and found[key].get("state") == "ready"
+                                and (found[key].get("error") or not found[key].get("people"))):
+            found[key] = {"state": "finding"}
+            TASKS.put(("find_people", uid, (key, start, layout, box)))
+    return {"key": key, **_public(u)}
+
+
 @app.get("/api/files/{path:path}")
 def files(path: str):
     p = (DATA / path).resolve()
@@ -800,6 +982,25 @@ def _check_mode(params: dict, chars: list, place: dict, performers: int) -> None
         raise UserError("Pick Recast, Restyle or Swap.")
 
 
+def _check_picks(params: dict, performers: int) -> None:
+    """Who in the clip is recast: chosen in the start frame. Only Recast uses it; other modes drop it."""
+    m = params["motion"]
+    if m.get("picks") is None:
+        return
+    if _mode(params) != "recast":
+        m.pop("picks")
+        return
+    picks = m["picks"]
+    if (not isinstance(picks, list) or len(picks) != performers or len(set(picks)) != len(picks)
+            or not all(isinstance(x, int) for x in picks)):
+        raise UserError("Choose one person in your clip for each performer." if performers == 1
+                        else "Choose two different people in your clip, one for each performer.")
+    layout, _ = _clip_layout(m["upload_id"], params.get("shape"))
+    entry = (UPLOADS[m["upload_id"]].get("people") or {}).get(_people_key(m.get("start", 0), layout)) or {}
+    if entry.get("state") != "ready" or not set(picks) <= {x["id"] for x in entry.get("people", [])}:
+        raise UserError("We don't have those people for this start point any more. Choose who to replace again.")
+
+
 @app.post("/api/jobs")
 def create_job(params: dict) -> dict:
     m = params.get("motion") or {}
@@ -808,6 +1009,8 @@ def create_job(params: dict) -> dict:
     _upload_path(m.get("upload_id", ""), "video")
     if m.get("length") not in SEGMENTS or float(m.get("start", 0)) < 0:
         raise UserError("Pick a length of 5, 10, 15 or 20 seconds.")
+    if params.get("subject") is None and params.get("mode") == "recast" and m.get("picks"):
+        params["subject"] = "person"  # chosen in the frame: the clip reader says person or animal (run_preview)
     if params.get("subject") not in ("person", "animal"):
         raise UserError("Say whether the performer is a person or an animal.")
     performers = params.get("performers", 1)
@@ -834,6 +1037,7 @@ def create_job(params: dict) -> dict:
     if place["mode"] == "character" and not chars:
         raise UserError("“Where my character is” needs a character.")
     _check_mode(params, chars, place, performers)
+    _check_picks(params, performers)
     if (params.get("shape") or "auto") not in ("auto", *graph.SIZES):
         raise UserError("Unknown shape.")
     if params.get("finish") not in ("480p", "720p", "1080p") or params.get("audio") not in ("original", "mute"):
@@ -908,18 +1112,28 @@ def edit_scene(jid: str, body: dict) -> dict:
 def cancel(jid: str) -> dict:
     j = _get(jid)
     with LOCK:
-        if j["state"] in ACTIVE_STATES:
+        active = j["state"] in ACTIVE_STATES
+        if active:
             _update(j, state="cancelled", progress=None,
                     error={"message": "Cancelled. Nothing was charged.", "refunded": True})
-            gjob = RUNNING.get(jid)
-        else:
-            gjob = None
-    if gjob is not None:
-        try:
-            gjob.cancel()  # our own job on the GPU; nobody else's is touched
-        except Exception:
-            log.exception("cancel of %s did not reach the GPU", jid)
+        gjob = RUNNING.get(jid) if active else None
+    try:  # our own job on the GPU; nobody else's is touched
+        if gjob is not None:
+            gjob.cancel()
+        elif active:  # not followed yet (the server just restarted): cancel it by its stored id
+            _cancel_stored(jid)
+    except Exception:
+        log.exception("cancel of %s did not reach the GPU", jid)
     return _public(j)
+
+
+def _cancel_stored(jid: str) -> None:
+    """Cancel the job's latest GPU submission by the id we stored when submitting it."""
+    subs = sorted(_job_dir(jid).glob("*submission*.json"), key=lambda f: f.stat().st_mtime)
+    job_id = json.loads(subs[-1].read_text()).get("job_id") if subs else None
+    if job_id:
+        with _comfy() as client:
+            client.jobs.get(job_id).cancel()
 
 
 @app.get("/api/jobs/{jid}")

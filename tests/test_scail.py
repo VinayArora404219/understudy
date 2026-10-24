@@ -89,3 +89,38 @@ def test_the_apps_default_seed_is_accepted():
     assert g["c3_sample"]["inputs"]["noise_seed"] == graph.DEFAULT_SEED + 3
     with pytest.raises(scail.ScailError):
         scail.build(_p(seed=graph.MAX_SEED))
+
+
+def test_chosen_performers_are_tracked_once_from_their_start_masks():
+    g = scail.build(_p(chunks=2, picks=["pick0.png", "pick1.png"]))
+    t = g["track"]["inputs"]
+    assert t["initial_mask"] == ["start_masks", 0] and "conditioning" not in t  # who, not what: no words
+    assert t["max_objects"] == 2 and g["clip_frames"]["inputs"]["length"] == scail.frames_for(2)
+    assert g["picks1"]["inputs"] == {"image1": ["pick0", 0], "image2": ["pick1", 0]}
+    # each chunk takes its slice of the one coloured track, so nobody can swap at a chunk join
+    assert g["c1_masks"]["inputs"] == {"image": ["masks", 0], "batch_index": scail.STRIDE, "length": scail.CHUNK}
+    assert g["c1_scail"]["inputs"]["pose_video_mask"] == ["c1_masks", 0]
+    assert g["c1_scail"]["inputs"]["reference_image_mask"] == ["masks", 1]
+    assert "drive_words" not in g and "c0_track" not in g
+
+
+def test_picks_must_match_the_characters():
+    with pytest.raises(scail.ScailError):
+        scail.build(_p(picks=["pick0.png"]))  # two characters, one chosen performer
+    scail.build(_p(people=1, track="", picks=["pick0.png"]))  # words aren't needed once someone is chosen
+
+
+def test_keeping_the_clip_adds_the_two_masks():
+    g = scail.build(_p(people=1, track="", picks=["pick0.png"], keep_points=[[[10, 20], [12, 40], [14, 60]]]))
+    assert g["keep_find0"]["inputs"]["positive_coords"] == '[{"x": 10, "y": 20}, {"x": 12, "y": 40}, {"x": 14, "y": 60}]'
+    assert g["keep_old"]["inputs"]["track_data"] == ["track", 0]  # the performers as tracked in the clip
+    assert g["keep_new_track"]["inputs"]["images"] == ["c0_dec", 0]  # the new characters, found in the render
+    assert {scail.KEEP_MASK_NODE, scail.KEEP_NEW_NODE} <= set(g)
+    assert g["keep_everyone_track"]["inputs"]["images"] == ["clip_frames", 0]  # anyone who walks in later
+    assert g["keep_rest"]["inputs"]["source"] == ["keep_old_grown", 0]  # never the chosen ones
+    g = scail.build(_p(people=1, track="", picks=["pick0.png"], others=["other0.png"],
+                       keep_points=[[[10, 20], [12, 40], [14, 60]]]))
+    assert g["keep_others_track"]["inputs"]["images"] == ["clip_frames", 0]  # bystanders tracked in the clip
+    assert scail.KEEP_OTHERS_NODE in g
+    with pytest.raises(scail.ScailError):  # another place has no clip to keep
+        scail.build(_p(people=1, track="", picks=["pick0.png"], replace=False, keep_points=[[[1, 1]]]))

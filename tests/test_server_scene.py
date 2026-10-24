@@ -45,3 +45,26 @@ def test_edit_is_locked_once_a_render_starts(app, state):
 def test_edit_must_be_a_real_line(app):
     _job(app, scene={"state": "ready", "text": "a man", "edited": False})
     assert TestClient(app.app).post("/api/jobs/job_test/scene", json={"text": " x "}).status_code == 400
+
+
+def test_cancel_reaches_the_gpu_without_a_live_handle(app, monkeypatch):
+    """Just after a restart nothing follows the job yet; the stored submission id still cancels it."""
+    j = _job(app, state="rendering")
+    (app._job_dir(j["id"]) / "render_submission_abc.json").write_text('{"job_id": "gpu-123"}')
+    cancelled = []
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        class jobs:
+            @staticmethod
+            def get(job_id):
+                return type("J", (), {"cancel": lambda self: cancelled.append(job_id)})()
+
+    monkeypatch.setattr(app, "_comfy", lambda: Client())
+    r = TestClient(app.app).post("/api/jobs/job_test/cancel")
+    assert r.status_code == 200 and j["state"] == "cancelled" and cancelled == ["gpu-123"]

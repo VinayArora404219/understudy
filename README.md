@@ -69,4 +69,5 @@ MIT for this repository's code. Models and custom nodes keep their own licences;
 Nothing machine-specific, private or unlicensed enters git: no media, no weights, no IPs, paths or
 usernames, no third-party clips. `tools/install_hooks.sh` installs a pre-commit check
 (`tools/check_public.py`) that enforces this. Machine details live in `.env` (see `.env.example`).
-Measured findings go in `bench/RESULTS.md`.
+Measured findings go in `bench/RESULTS.md`; every problem met so far and how it was fixed is in
+`docs/PROBLEMS_AND_FIXES.md`.

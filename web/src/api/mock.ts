@@ -178,6 +178,22 @@ export const mockApi: Api = {
   },
   async getUpload(id) { return { ...uploads.get(id)! }; },
 
+  // the mock has no detector: two made-up people on the clip's first frame, outlined by their boxes
+  async findPeople(id, start) {
+    const u = uploads.get(id)!;
+    const key = `${start.toFixed(2)}_auto`;
+    if (!u.people?.[key]) {
+      u.people = { ...u.people, [key]: { state: "finding" } };
+      void sleep(1500).then(() => {
+        u.people = { ...u.people, [key]: { state: "ready", frame_url: u.thumb_url, people: [
+          { id: 1, box: [0.1, 0.2, 0.32, 0.72], area: 0.15, cx: 0.26 },
+          { id: 2, box: [0.56, 0.24, 0.3, 0.68], area: 0.13, cx: 0.71 },
+        ] } };
+      });
+    }
+    return { key, ...u };
+  },
+
   async createJob(params) {
     const j: Job = { id: id("job"), created_at: new Date().toISOString(), state: "draft", title: title(params),
       params, cost_renders: params.motion.length / 5 };

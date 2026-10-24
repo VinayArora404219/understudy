@@ -10,6 +10,8 @@ export interface Api {
   /** Ask for an image's description in a role; poll getUpload until `descriptions[role]` is set. */
   describeUpload(id: string, role: ImageRole): Promise<Upload>;
   getUpload(id: string): Promise<Upload>;
+  /** Look for everyone in a clip's start frame; poll getUpload until `people[key].state` is "ready". */
+  findPeople(id: string, start: number, retry?: boolean): Promise<Upload & { key: string }>;
   createJob(params: JobParams): Promise<Job>;
   requestPreview(jobId: string, opts?: { newSeed?: boolean }): Promise<Job>;
   approve(jobId: string): Promise<Job>;
@@ -59,6 +61,8 @@ const live: Api = {
   },
   describeUpload: (id, role) => call(`/uploads/${id}/describe`, { method: "POST", body: JSON.stringify({ role }) }),
   getUpload: (id) => call(`/uploads/${id}`),
+  findPeople: (id, start, retry) =>
+    call(`/uploads/${id}/people`, { method: "POST", body: JSON.stringify({ start, retry: !!retry }) }),
   createJob: (params) => call("/jobs", { method: "POST", body: JSON.stringify(params) }),
   requestPreview: (id, opts) =>
     call(`/jobs/${id}/preview`, { method: "POST", body: JSON.stringify({ new_seed: !!opts?.newSeed }) }),

@@ -50,6 +50,18 @@ Rules:
 - Outside "find", do not describe clothes, colours, faces, the room, or the camera.
 Example pose: "stands upright, leans back slightly, one hand on top of the head, face tilted up"."""
 
+def prompt_for(count: int) -> str:
+    """The reader when the visitor has chosen who is recast: exactly those, never a passer-by.
+
+    Measured: asked for "every person moving or performing", it described a small walker in the background
+    and skipped the man standing still in front, who was the one chosen."""
+    who = "one performer: the largest person or animal" if count == 1 else \
+        f"{count} performers: the {count} largest people or animals"
+    first, rest = PROMPT.split("\n", 1)
+    return (f"Look at the picture. It shows exactly {who} in front. Anyone greyed out, small or in the "
+            f"background is not a performer: leave them out.\n{rest}")
+
+
 # Any left/right that belongs to a body, not to the picture: "left arm", "her right", "turned slightly left".
 BODY_SIDE = re.compile(r"\b(left|right)\s+(arm|hand|leg|foot|paw|shoulder|elbow|knee|hip|side|ear|eye)s?\b"
                        r"|\b(her|his|its|their)\s+(left|right)\b"
@@ -93,8 +105,9 @@ ROLE_PROMPTS = {
     "character": ("Describe the main person or character in this picture so an artist could redraw them, in one "
                   "line of at most 30 words: apparent age and gender, build, face shape, skin tone, hair colour "
                   "and style, facial hair, glasses, and every clothing item they wear with its colour, including hats. "
-                  "Only what they wear: nothing near them, no background, no pose, no names, no brand names, "
-                  "no left or right. Reply with the line only."),
+                  "Only what is on their body: never an object beside them or on a table, even one that matches "
+                  "their clothes. Only what they have, never what they lack. No background, no pose, no names, "
+                  "no brand names, no left or right. Reply with the line only."),
     "outfit": ("Name the garment or outfit in this picture in at most 12 words: what it is, colour, material and "
                "notable details. No brand names. Reply with the words only, starting with \"a\"."),
     "product": ("Name the object in this picture in at most 12 words: what it is, colour, material and shape. "
@@ -159,26 +172,43 @@ def build_role(image: Any, role: str, *, prefix: str = "recast/describe_image") 
     return build(image, prefix=prefix, prompt=ROLE_PROMPTS[role], max_length=120)
 
 
+# "no glasses", "without a hat", "not wearing a tie": a prompt can't say what isn't there, it only adds the
+# word. Measured: a character worded "no glasses ... with matching helmet" put on a helmet where the clip's
+# performer put on sunglasses.
+_NEGATION = re.compile(r"(?i)^(no|without|not wearing|not)\b")
+_INLINE_NEGATION = re.compile(r"(?i)\s+(?:and|with)\s+no\s+[^,]*|\s+without\s+[^,]*")
+
+
+def drop_negations(text: str) -> str:
+    """The text without anything said to be absent: whole clauses ("no glasses") and tails ("with no hat")."""
+    parts = [_INLINE_NEGATION.sub("", c).strip() for c in text.split(",")]
+    return ", ".join(c for c in parts if c and not _NEGATION.match(c))
+
+
 def parse_role(text: str, role: str) -> str:
-    """One clean line: no quotes or labels, no sides, no more words than the role allows."""
+    """One clean line: no quotes or labels, no sides, nothing said to be absent, no more words than the role
+    allows."""
     line = next((ln for ln in text.strip().splitlines() if ln.strip()), "")
     line = re.sub(r"^\s*(description|answer|outfit|product|character|scene)\s*:\s*", "", line, flags=re.I)
     line = line.strip().strip('"\'`*').rstrip(".")
     line = ", ".join(c.strip() for c in line.split(",") if c.strip() and not re.search(r"(?i)\b(left|right)\b", c))
-    return " ".join(line.split()[:ROLE_WORDS[role]])
+    return " ".join(drop_negations(line).split()[:ROLE_WORDS[role]])
 
 
 def mismatch(found: list[Performer], *, performers: int, subject: str) -> str | None:
-    """A sentence for the visitor when the clip doesn't match their answer, else None."""
+    """A sentence for the visitor when the clip doesn't hold what the job needs, else None. Only jobs without
+    chosen performers get here (Swap's outfit and product need one person), so it names the need, not a
+    question on the page."""
     if not found:
         return None  # nothing recognised: let the preview show what happens rather than block
     names = " and ".join(f"a {p.what or p.kind}" for p in found)
     if len(found) > 2:
         return f"We see {len(found)} performers in this clip. Up to two performers for now: trim or crop the clip."
+    want = ("one " if performers == 1 else "two ") + {("person", 1): "person", ("person", 2): "people",
+                                                      ("animal", 1): "animal", ("animal", 2): "animals"}[subject, performers]
     if len(found) != performers:
         n = "one performer" if len(found) == 1 else "two performers"
-        return f"We see {n} in this clip ({names}). Change “Who's in your clip?” to match, then try again."
+        return f"We see {n} in this clip ({names}), but this needs {want}. Try a clip with {want} in view."
     if any(p.kind != subject for p in found):
-        return (f"We see {names} in this clip, but you chose {'animals' if subject == 'animal' else 'people'}. "
-                f"Change “Who's in your clip?” to match, then try again.")
+        return f"We see {names} in this clip, but this needs {want}. Try a clip with {want} in view."
     return None

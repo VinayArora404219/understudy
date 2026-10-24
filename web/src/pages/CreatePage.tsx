@@ -2,8 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { CharacterRef, ImageRole, Job, JobParams, Mode, MotionPreset, PlaceMode, Upload } from "../api/types";
+import type { CharacterRef, ImageRole, Job, JobParams, Mode, MotionPreset, Person, PlaceMode, Upload } from "../api/types";
 import { Dropzone } from "../components/Dropzone";
+import { PeoplePicker, PersonThumb } from "../components/PeoplePicker";
 import { aspectOf, Button, Card, CheckList, cx, Pill, SectionTitle, Spinner } from "../components/ui";
 
 type Step = "motion" | "change" | "preview";
@@ -17,13 +18,25 @@ const MODES: [Mode, string, string][] = [
   ["swap", "Swap", "You stay you. Change one thing: the outfit, a product in hand, or the place."],
 ];
 
-/** Who is in the clip. Decides which changes make sense (a cat has no hand for a product). */
-type Cast = "person" | "animal" | "two_people" | "two_animals";
-const CASTS: [Cast, string][] = [["person", "One person"], ["animal", "One animal"], ["two_people", "Two people"], ["two_animals", "Two animals"]];
-const performersOf = (c: Cast): 1 | 2 => (c.startsWith("two") ? 2 : 1);
-const subjectOf = (c: Cast): JobParams["subject"] => (c.endsWith("animal") || c.endsWith("animals") ? "animal" : "person");
+const MAX_PICKS = 2;
 
-interface Motion { upload?: Upload; preset?: MotionPreset; start: number; length: Length; cast: Cast }
+/** Everyone found in the clip's start frame (`people`), and who Recast replaces (`picks`, Person ids).
+ *  Words can't pick one person out of a crowd, so the visitor taps them (recast/people.py). */
+interface Motion {
+  upload?: Upload; preset?: MotionPreset; start: number; length: Length;
+  people?: { key: string; frame_url: string; list: Person[] }; picks: number[];
+}
+const chosenOf = (m: Motion): Person[] =>
+  (m.people?.list ?? []).filter((p) => m.picks.includes(p.id)).sort((a, b) => a.cx - b.cx); // left to right
+/** Recast replaces whoever was chosen; a ready-made motion (no picker) has one performer. */
+const performersOf = (mode: Mode, m: Motion): 1 | 2 => (mode === "recast" && m.picks.length === 2 ? 2 : 1);
+/** Chosen before anyone taps: everyone, when there are one or two clear people. Something small next to a
+ *  person (a football was found as one) is never chosen for them. */
+function autoPicks(list: Person[]): number[] {
+  const biggest = Math.max(0, ...list.map((p) => p.area));
+  const clear = list.filter((p) => p.area >= biggest * 0.25);
+  return clear.length <= MAX_PICKS ? clear.map((p) => p.id) : [];
+}
 interface CharSlot { upload: Upload; text: string; keepOutfit: boolean }
 type SwapWhat = "outfit" | "product" | "place";
 interface Change {
@@ -42,7 +55,7 @@ export function CreatePage() {
   const initial = MODES.find(([m]) => m === search.get("mode"))?.[0] ?? "recast";
   const [mode, setMode] = useState<Mode>(initial);
   const [step, setStep] = useState<Step>("motion");
-  const [motion, setMotion] = useState<Motion>({ start: 0, length: 5, cast: "person" });
+  const [motion, setMotion] = useState<Motion>({ start: 0, length: 5, picks: [] });
   const [change, setChange] = useState<Change>({ swap: "outfit", characters: [], place: { mode: "keep", text: "" }, finish: "720p", audio: "original" });
   const [job, setJob] = useState<Job>();
   const { data: session } = useQuery({ queryKey: ["session"], queryFn: () => api.session() });
@@ -53,7 +66,7 @@ export function CreatePage() {
   return (
     <div className="grid gap-8 lg:grid-cols-[1fr_320px]">
       <div className="min-w-0">
-        <ol className="mb-8 flex items-center gap-2 text-sm" aria-label="Progress">
+        <ol className="mb-8 flex items-center gap-1.5 text-sm sm:gap-2" aria-label="Progress">
           {steps.map(([s, label], i) => (
             <li key={s} className="flex items-center gap-2">
               <span className={cx(
@@ -61,7 +74,7 @@ export function CreatePage() {
                 i < idx && "bg-accent text-accent-ink", i === idx && "bg-ink-100 text-ink-950", i > idx && "bg-ink-800 text-ink-500",
               )}>{i < idx ? "✓" : i + 1}</span>
               <span className={i === idx ? "text-ink-100" : "text-ink-500"}>{label}</span>
-              {i < steps.length - 1 && <span className="mx-2 h-px w-8 bg-ink-700" />}
+              {i < steps.length - 1 && <span className="mx-0.5 h-px w-3 bg-ink-700 sm:mx-2 sm:w-8" />}
             </li>
           ))}
         </ol>
@@ -80,15 +93,18 @@ export function CreatePage() {
 /* ---------------------------------------------------------------- 1. motion */
 
 function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
-  mode: Mode; setMode: (m: Mode) => void; motion: Motion; setMotion: (m: Motion) => void; onNext: () => void;
+  mode: Mode; setMode: (m: Mode) => void; motion: Motion; setMotion: React.Dispatch<React.SetStateAction<Motion>>; onNext: () => void;
 }) {
   const [tab, setTab] = useState<"mine" | "ours">(motion.preset ? "ours" : "mine");
   const presets = useQuery({ queryKey: ["presets"], queryFn: () => api.presets() });
   const up = useMutation({ mutationFn: (f: File) => api.upload(f, "video"),
-    onSuccess: (u) => setMotion({ ...motion, upload: u, preset: undefined, start: 0 }) });
+    onSuccess: (u) => setMotion({ ...motion, upload: u, preset: undefined, start: 0, people: undefined, picks: [] }) });
   const blocked = motion.upload?.checks.some((c) => c.level === "block");
   const clipSeconds = motion.upload?.info.seconds ?? motion.preset?.seconds ?? 0;
   const ready = (motion.upload && !blocked) || motion.preset;
+  // Recast replaces chosen people, so someone must be chosen; Swap only needs the count; Restyle redraws everyone
+  const lookForPeople = !!motion.upload && !blocked && mode !== "restyle";
+  const canGo = ready && (mode !== "recast" || !motion.upload || motion.picks.length > 0);
 
   return (
     <section>
@@ -124,7 +140,7 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
               <img src={motion.upload.thumb_url} alt="First frame of your clip" className="h-56 w-auto self-start rounded-xl object-cover" />
               <div className="flex-1 space-y-4">
                 <CheckList checks={motion.upload.checks} />
-                <Button size="sm" variant="ghost" onClick={() => setMotion({ ...motion, upload: undefined })}>Use a different clip</Button>
+                <Button size="sm" variant="ghost" onClick={() => setMotion({ ...motion, upload: undefined, people: undefined, picks: [] })}>Use a different clip</Button>
               </div>
             </Card>
           )}
@@ -138,7 +154,7 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           {presets.isLoading && [0, 1, 2].map((i) => <div key={i} className="skeleton aspect-[9/16] rounded-[var(--radius-card)]" />)}
           {presets.data?.map((p) => (
-            <button key={p.id} onClick={() => setMotion({ ...motion, preset: p, upload: undefined, start: 0, length: 5 })}
+            <button key={p.id} onClick={() => setMotion({ ...motion, preset: p, upload: undefined, start: 0, length: 5, people: undefined, picks: [] })}
               className={cx("overflow-hidden rounded-[var(--radius-card)] border text-left transition",
                 motion.preset?.id === p.id ? "border-accent ring-2 ring-accent/40" : "border-ink-700 hover:border-ink-500")}>
               <img src={p.thumb_url} alt="" className="aspect-[9/16] w-full object-cover" />
@@ -151,12 +167,8 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
         </div>
       )}
 
-      {ready && (
-        <div className="mt-6">
-          <Segmented label="Who's in your clip?" value={motion.cast} options={CASTS}
-            onChange={(v) => setMotion({ ...motion, cast: v as Cast })} />
-          <p className="mt-1.5 text-xs text-ink-500">Up to two performers for now. With two, we tell them apart by where they stand: left and right.</p>
-        </div>
+      {lookForPeople && motion.upload && (
+        <WhoToReplace upload={motion.upload} start={motion.start} show={mode === "recast"} motion={motion} setMotion={setMotion} />
       )}
 
       {ready && clipSeconds > 5 && (
@@ -175,7 +187,7 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
       )}
 
       <div className="mt-8 flex justify-end">
-        <Button variant="primary" size="lg" disabled={!ready}
+        <Button variant="primary" size="lg" disabled={!canGo}
           onClick={() => {
             const consent = document.getElementById("consent") as HTMLInputElement | null;
             if (motion.upload && consent && !consent.checked) { consent.focus(); consent.reportValidity(); return; }
@@ -186,15 +198,92 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
   );
 }
 
+/** Looks for everyone in the clip's start frame once a clip is in. Recast shows them to choose who is replaced;
+ *  Swap (show=false) only keeps the count, since an outfit or a product needs exactly one person. */
+function WhoToReplace({ upload, start, show, motion, setMotion }: {
+  upload: Upload; start: number; show: boolean; motion: Motion; setMotion: React.Dispatch<React.SetStateAction<Motion>>;
+}) {
+  const qc = useQueryClient();
+  const [key, setKey] = useState<string>();
+  const [slow, setSlow] = useState(false);
+  const [full, setFull] = useState(false); // a third tap: say why nothing happened
+  const ask = useMutation({
+    mutationFn: (retry: boolean) => api.findPeople(upload.id, start, retry),
+    onSuccess: (u) => { qc.setQueryData(["upload", u.id], u); setKey(u.key); },
+  });
+  useEffect(() => { ask.mutate(false); }, [upload.id, start]); // eslint-disable-line react-hooks/exhaustive-deps
+  const q = useQuery({
+    queryKey: ["upload", upload.id], queryFn: () => api.getUpload(upload.id), enabled: !!key,
+    refetchInterval: (r) => (key && r.state.data?.people?.[key]?.state !== "ready" ? 1500 : false),
+  });
+  const entry = key ? q.data?.people?.[key] : undefined;
+  const finding = ask.isPending || (!ask.isError && (!entry || entry.state === "finding"));
+  const error = ask.isError ? (ask.error as Error).message : entry?.error;
+  useEffect(() => { // the detector shares the GPU with renders, so a wait can be long; say so instead of spinning
+    if (!finding) return;
+    setSlow(false);
+    const t = setTimeout(() => setSlow(true), 30_000);
+    return () => clearTimeout(t);
+  }, [finding, key]);
+  useEffect(() => { // chosen once per frame; coming back to this step keeps the visitor's own choice
+    if (!key || entry?.state !== "ready" || !entry.frame_url || entry.error) return;
+    const list = entry.people ?? [];
+    setMotion((m) => m.people?.key === key ? m : { ...m, people: { key, frame_url: entry.frame_url!, list }, picks: autoPicks(list) });
+  }, [key, entry?.state]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!show) return null;
+  const list = (motion.people?.key === key && motion.people?.list) || [];
+  const toggle = (id: number) => {
+    setFull(false);
+    if (!motion.picks.includes(id) && motion.picks.length >= MAX_PICKS) { setFull(true); return; }
+    setMotion((m) => ({ ...m, picks: m.picks.includes(id) ? m.picks.filter((x) => x !== id) : [...m.picks, id] }));
+  };
+  return (
+    <div className="mt-8">
+      <div className="mb-1 font-medium">Who do you want to replace?</div>
+      {finding ? (
+        <>
+          <p className="mb-3 flex items-center gap-2 text-sm text-ink-300"><Spinner />
+            {slow ? "Still looking. The GPU is busy with another render; this starts as soon as it's free." : "Finding everyone in your first frame…"}</p>
+          <div className="relative inline-block max-w-full">
+            <img src={upload.thumb_url} alt="" className="max-h-[65vh] max-w-full rounded-xl opacity-50" />
+            <div className="skeleton absolute inset-0 rounded-xl opacity-60" />
+          </div>
+        </>
+      ) : error || !list.length ? (
+        <div className="rounded-xl border border-ink-700 p-4 text-sm">
+          <p className="text-ink-100">{error ?? "We couldn't find anyone in your first frame."}</p>
+          <p className="mt-1 text-ink-500">Recast needs a person or an animal in view at the start of the clip.</p>
+          <Button size="sm" className="mt-3" disabled={ask.isPending} onClick={() => { setKey(undefined); setMotion((m) => ({ ...m, people: undefined, picks: [] })); ask.mutate(true); }}>Try again</Button>
+        </div>
+      ) : (
+        <>
+          <p className="mb-3 text-sm text-ink-300">
+            {list.length === 1 ? "We found one performer. They're chosen; tap to change."
+              : motion.picks.length ? `We found ${list.length}. Tap to choose or free someone, up to two.`
+              : `We found ${list.length}. Tap who to replace (one or two).`}
+          </p>
+          <PeoplePicker frameUrl={motion.people!.frame_url} people={list} picks={motion.picks} onToggle={toggle} />
+          {full && <p className="mt-2 text-sm text-warn">Up to two for now. Tap someone chosen to free them first.</p>}
+          {!motion.picks.length && <p className="mt-2 text-sm text-ink-500">Choose at least one person to continue.</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ---------------------------------------------------------------- 2. change */
 
 function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
   mode: Mode; change: Change; setChange: (c: Change) => void; motion: Motion; onBack: () => void; onPreview: (j: Job) => void;
 }) {
   const qc = useQueryClient();
-  const two = performersOf(motion.cast) === 2;
-  const onePerson = !two && subjectOf(motion.cast) === "person";
-  const slots = change.characters.slice(0, two ? 2 : 1);
+  const performers = performersOf(mode, motion);
+  const two = performers === 2;
+  const chosen = chosenOf(motion);
+  const found = motion.people?.list.length; // undefined: not known, and the server checks what it sees
+  const onePerson = found === undefined || found === 1;
+  const slots = change.characters.slice(0, performers);
   const filled = slots.filter((c): c is CharSlot => !!c);
   // A held product or a garment needs one person with hands; say why instead of hiding it.
   const swap: SwapWhat = !onePerson && change.swap !== "place" ? "place" : change.swap;
@@ -234,9 +323,10 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
       const refs: CharacterRef[] = characters.map((c) => ({ upload_id: c.upload.id, text: c.text, keep_outfit: c.keepOutfit }));
       const params: JobParams = {
         mode,
-        motion: { upload_id: motion.upload?.id, preset_id: motion.preset?.id, start: motion.start, length: motion.length },
-        performers: performersOf(motion.cast),
-        subject: subjectOf(motion.cast),
+        motion: { upload_id: motion.upload?.id, preset_id: motion.preset?.id, start: motion.start, length: motion.length,
+          picks: mode === "recast" && motion.picks.length ? motion.picks : undefined },
+        performers,
+        subject: "person", // Swap's items need a person; with picks the server reads person or animal from the clip
         characters: refs,
         style,
         place: { mode: place.mode, text: place.text || undefined, upload_id: place.upload?.id },
@@ -275,10 +365,25 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
         <SectionTitle step="Step 2" title={two ? "Who performs instead?" : "Who performs instead?"}
           hint="Your moves, someone else's look. Add a look or a new place too if you like." />
         <Card className="space-y-6 p-5">
-          {(two ? ["Performer on the left", "Performer on the right"] : [""]).map((who, i) => (
-            <CharacterPick key={i} who={who} slot={slots[i]} onChange={(c) => setSlot(i, c)} />
+          {(chosen.length ? chosen : two ? [undefined, undefined] : [undefined]).map((person, i) => (
+            <div key={person?.id ?? i} className={cx(i > 0 && "border-t border-ink-700/70 pt-6")}>
+              <CharacterPick slot={slots[i]} onChange={(c) => setSlot(i, c)}
+                who={person && motion.people ? (
+                  <span className="flex items-center gap-3">
+                    <PersonThumb frameUrl={motion.people.frame_url} box={person.box} className="h-20 w-auto max-w-20" />
+                    <span>Replaces person {person.id}</span>
+                  </span>
+                ) : two ? (i ? "Performer on the right" : "Performer on the left") : ""} />
+            </div>
           ))}
-          {two && <p className="text-xs text-ink-500">Left and right as you see them in the picture, not their own left and right.</p>}
+          {two && (
+            <div className="flex items-center justify-between gap-3 border-t border-ink-700/70 pt-4">
+              <p className="text-xs text-ink-500">{chosen.length ? "Characters go onto the chosen people left to right, as in your clip." : "Left and right as you see them in the picture, not their own left and right."}</p>
+              <Button size="sm" disabled={!slots[0] && !slots[1]} onClick={() => setChange({ ...change, characters: [slots[1], slots[0]] })}>
+                ⇄ Swap who plays whom
+              </Button>
+            </div>
+          )}
         </Card>
         <Option title="Look" line="Optional: draw your character in a style." on={!!change.style}>
           <StyleGrid value={change.style} onChange={(k) => setChange({ ...change, style: k })} />
@@ -300,7 +405,7 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
             options={[["outfit", "Outfit"], ["product", "Product in hand"], ["place", "Place"]]}
             onChange={(v) => setChange({ ...change, swap: v as SwapWhat })} />
           {!onePerson && swap === "place" && change.swap !== "place" && (
-            <p className="text-sm text-ink-500">Outfit and product swaps need one person in the clip.</p>
+            <p className="text-sm text-ink-500">Outfit and product swaps need one person in the clip; we found {found} in your first frame. A place swap works with any number.</p>
           )}
           {swap === "outfit" && <>
             <ImagePick label="Outfit image" image={change.outfit?.upload} hint="A product photo of the garment works best."
@@ -395,7 +500,7 @@ export function PreviewStep({ job: first, onBack, backLabel = "Change choices" }
           ? "Your clip stays as filmed: its room, light and objects. Only the performers are replaced, left to right, by these characters. Check the order before a render is spent. Previews are free."
           : "We redrew the first frame of your clip with your changes. The whole video is animated from this one still, so check it here, before a render is spent. Previews are free."} />
       <div className="grid grid-cols-2 gap-4">
-        <Frame label="What you filmed (first frame)" src={job.preview?.frame_url} loading={matching && !job.preview} aspect={job.aspect} />
+        <Frame label={job.params.motion.picks?.length ? "Who you chose, in your first frame" : "What you filmed (first frame)"} src={job.preview?.frame_url} loading={matching && !job.preview} aspect={job.aspect} />
         <Frame label={cast ? "Who replaces them, left to right" : "How your video will start"} src={job.preview?.reference_url}
           loading={matching} accent aspect={cast ? [1, 1] : job.aspect} />
       </div>
@@ -496,12 +601,18 @@ function Summary({ mode, motion, change, rendersLeft }: { mode: Mode; motion: Mo
     const r: [string, string][] = [];
     r.push(["Motion", motion.upload ? `Your clip · ${motion.length} s` : motion.preset ? `${motion.preset.title} · ${motion.length} s` : "Not chosen"]);
     r.push(["Mode", MODES.find(([m]) => m === mode)?.[1] ?? mode]);
-    r.push(["Performers", CASTS.find(([c]) => c === motion.cast)?.[1] ?? ""]);
-    const two = performersOf(motion.cast) === 2;
+    const chosen = chosenOf(motion);
+    const of = motion.people ? ` of ${motion.people.list.length}` : "";
+    if (mode === "recast" && motion.upload) {
+      r.push(["Replacing", chosen.length === 0 ? "Not chosen" : chosen.length === 1 ? `Person ${chosen[0].id}${of}`
+        : `People ${chosen[0].id} and ${chosen[1].id}${of}`]);
+    }
+    const two = performersOf(mode, motion) === 2;
     const placeLabel = change.place.mode === "keep" ? "Your own" : change.place.mode === "describe" ? change.place.text || "Described"
       : change.place.mode === "character" ? "Character's photo" : "From image";
     if (mode === "recast") {
-      change.characters.slice(0, two ? 2 : 1).forEach((c, i) => c && r.push([two ? (i ? "Right" : "Left") : "Character", c.text || "Your image"]));
+      change.characters.slice(0, two ? 2 : 1).forEach((c, i) => c && r.push([
+        chosen[i] && two ? `For person ${chosen[i].id}` : two ? (i ? "Right" : "Left") : "Character", c.text || "Your image"]));
       if (change.style) r.push(["Look", styles.data?.find((s) => s.key === change.style)?.name ?? change.style]);
       r.push(["Place", placeLabel]);
     } else if (mode === "restyle") {
@@ -588,7 +699,7 @@ function useAutoText(upload: Upload | undefined, role: ImageRole, text: string, 
   return { writing: waiting(q.data), failed: words === "" || (!!upload && gaveUp === upload.id && words === undefined) };
 }
 
-function CharacterPick({ who, slot, onChange }: { who: string; slot?: CharSlot; onChange: (c: CharSlot | undefined) => void }) {
+function CharacterPick({ who, slot, onChange }: { who: React.ReactNode; slot?: CharSlot; onChange: (c: CharSlot | undefined) => void }) {
   const { writing, failed } = useAutoText(slot?.upload, "character", slot?.text ?? "", (t) => slot && onChange({ ...slot, text: t }));
   return (
     <div className="space-y-3">

@@ -50,7 +50,20 @@ BG_REMOVAL = "birefnet.safetensors"
 CUTOUT_GREY = 0x808080  # fallback backdrop when the scene's own colour is unknown
 
 MAX_TEXT = 400
-SUBJECTS = ("person", "dancer", "performer", "cat", "dog", "animal")
+SUBJECTS = ("person", "dancer", "performer", "cat", "dog", "animal", "character")
+HUMAN = re.compile(r"\b(man|woman|men|women|boy|girl|person|people|guy|lady|child|kid|teen\w*)\b", re.I)
+ANIMAL = re.compile(r"\b(cat|kitten|dog|puppy)\b", re.I)
+
+
+def cast_word(texts: list[str]) -> str:
+    """What the characters are, from their own descriptions: in another place the picture shows them, not the
+    clip's performers. Measured: a dog-and-cat clip recast as two men was worded "two animals... one paw low in
+    front", and the racer came out on all fours. A description that names a person makes it "person"."""
+    joined = " ".join(texts)
+    if HUMAN.search(joined):
+        return "person"
+    m = ANIMAL.search(joined)
+    return {"kitten": "cat", "puppy": "dog"}.get(m.group(1).lower(), m.group(1).lower()) if m else "character"
 
 BASES = ("frame", "character", "location")
 SHOT_WORDS = {"whole body": "the whole body in view from head to feet", "knees up": "seen from the knees up",
@@ -214,6 +227,8 @@ def _prompt_elsewhere(p: MatchParams) -> str:
         cast.append(("character2", p.character2_text, "right", p.shot2, p.pose2))
     for name, text, side, shot, pose in cast:
         parts.append(f"{WHERE[side]}, the {p.subject} from the {nth(name)} picture: {_clause(text)}.")
+        if p.subject == "person":  # an animal performer's "paw" is a person's hand
+            pose = re.sub(r"\bpaw(s?)\b", r"hand\1", pose)
         body = ", ".join(x for x in (_clause(pose), SHOT_WORDS.get(shot, "")) if x)
         if body:
             parts.append(f"This {p.subject} {body}.")

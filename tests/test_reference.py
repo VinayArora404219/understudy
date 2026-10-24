@@ -272,3 +272,9 @@ def test_every_image_but_the_place_is_cut_out_onto_grey():
     assert g["location_rs"]["inputs"]["image"] == ["location", 0]  # a place is used whole
     assert "character_cut" in g
     assert "bg_model" not in ref.build(_p(cutout=False))
+
+
+def test_another_place_is_worded_by_what_the_characters_are():
+    assert ref.cast_word(["A middle-aged man with short dark hair", "a woman in red"]) == "person"
+    assert ref.cast_word(["an orange tabby kitten"]) == "cat"
+    assert ref.cast_word(["a green robot"]) == "character"

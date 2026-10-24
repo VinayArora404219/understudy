@@ -28,6 +28,23 @@ export interface Upload {
   checks: Check[];
   descriptions?: Partial<Record<ImageRole, string>>; // written by the vision model, "" when it couldn't
   describing?: ImageRole[]; // still being written
+  people?: Record<string, PeopleEntry>; // a clip's start frame, by people key ("0.00_portrait")
+}
+
+/** Someone found in a clip's start frame; Recast replaces the ones the visitor chooses. */
+export interface Person {
+  id: number; // 1, 2, 3... left to right
+  box: [number, number, number, number]; // x, y, width, height as fractions of the frame
+  area: number; // fraction of the frame
+  cx: number; // centre, fraction of the width: what "left to right" means everywhere
+  mask_url?: string; // white on black, the frame's size
+}
+
+export interface PeopleEntry {
+  state: "finding" | "ready";
+  frame_url?: string;
+  people?: Person[];
+  error?: string; // ready but nobody could be looked for
 }
 
 export type ImageRole = "character" | "outfit" | "product";
@@ -63,9 +80,10 @@ export type Mode = "recast" | "restyle" | "swap";
 
 export interface JobParams {
   mode: Mode;
-  motion: { upload_id?: string; preset_id?: string; start: number; length: 5 | 10 | 15 | 20 };
-  performers: 1 | 2; // who is in the clip
-  subject: "person" | "animal"; // what the performer(s) are
+  /** picks: Recast's chosen people (Person.id) in the start frame; they set `performers`. */
+  motion: { upload_id?: string; preset_id?: string; start: number; length: 5 | 10 | 15 | 20; picks?: number[] };
+  performers: 1 | 2; // who is replaced (Recast) or in the clip
+  subject: "person" | "animal"; // with picks, the server reads it from the clip
   /** One per performer, or none. With two performers: [the one on the picture's left, the one on its right]. */
   characters: CharacterRef[];
   outfit?: { upload_id: string; text: string };

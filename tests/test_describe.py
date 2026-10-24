@@ -45,7 +45,7 @@ def test_mismatch_sentences():
     cat = describe.Performer("right", "animal", "cat", "")
     assert describe.mismatch([dog, cat], performers=2, subject="animal") is None
     assert "We see two performers in this clip (a dog and a cat)" in describe.mismatch([dog, cat], performers=1, subject="person")
-    assert "you chose people" in describe.mismatch([dog, cat], performers=2, subject="person")
+    assert "but this needs two people" in describe.mismatch([dog, cat], performers=2, subject="person")
     assert describe.mismatch([], performers=1, subject="person") is None  # unsure: don't block
     assert "Up to two" in describe.mismatch([dog, cat, dog], performers=2, subject="animal")
 
@@ -85,3 +85,18 @@ def test_find_names_the_performer_for_the_tracker():
     assert woman.find == ""  # a side is the picture's, not the performer's
     assert describe.parse('{"performers": [{"what": "dog", "find": "dog"}]}')[0].find == ""  # too short to help
     assert describe.Performer("left", "animal", "dog", "").find == ""  # cached performers from before still load
+
+
+def test_chosen_performers_get_a_reader_that_counts_them():
+    one, two = describe.prompt_for(1), describe.prompt_for(2)
+    assert "exactly one performer" in one and "exactly 2 performers" in two
+    assert "background is not a performer" in one
+    assert one.endswith(describe.PROMPT.split("\n", 1)[1])  # the same rules and JSON shape follow
+
+
+def test_nothing_said_to_be_absent_reaches_a_prompt():
+    text = ("A man, mid-40s, oval face, short black hair, no facial hair, no glasses, wears a red racing suit "
+            "with no logos, without a hat")
+    assert describe.drop_negations(text) == "A man, mid-40s, oval face, short black hair, wears a red racing suit"
+    assert describe.parse_role("No glasses, a woman with long blonde hair", "character") == "a woman with long blonde hair"
+    assert describe.drop_negations("a knotted scarf, nothing else") == "a knotted scarf, nothing else"  # "no" whole words only

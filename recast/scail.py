@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import graph
+from . import describe, graph, keep
 
 UNET = "SCAIL-2-Q4_K_M.gguf"
 DPO = "wan2.1_SCAIL_2_DPO_lora_bf16.safetensors"
@@ -74,6 +74,11 @@ class ScailParams:
     seed: int = 1
     prefix: str = "recast/scail"
     unet: str = UNET
+    picks: list[Any] | None = None  # one first-frame mask per chosen performer, left to right (recast/people.py)
+    # with picks in the clip's place: points inside each pick, where SAM finds the new character in the render
+    # for keeping the clip as filmed around them (recast/keep.py; the composite itself is recast/composite.py)
+    keep_points: list[list[list[int]]] | None = None
+    others: list[Any] | None = None  # start masks of everyone not recast: always kept as filmed
 
     def validate(self) -> None:
         if self.layout not in graph.SIZES:
@@ -84,7 +89,12 @@ class ScailParams:
             raise ScailError("one or two people")
         if not self.prompt.strip() or len(self.prompt) > MAX_TEXT:
             raise ScailError(f"the prompt must be 1..{MAX_TEXT} characters")
-        if not self.track.strip() or len(self.track) > 60:
+        if self.picks is not None and len(self.picks) != self.people:
+            raise ScailError("one chosen performer per character")
+        if self.keep_points is not None and (self.picks is None or not self.replace
+                                             or len(self.keep_points) != self.people):
+            raise ScailError("keeping the clip needs the chosen performers, in the clip's place")
+        if self.picks is None and (not self.track.strip() or len(self.track) > 60):
             raise ScailError("say what to track in the clip, in a few words")
         if not 0 <= self.seed <= graph.MAX_SEED - MAX_CHUNKS:  # each chunk samples with seed + its index
             raise ScailError("seed out of range")
@@ -109,7 +119,6 @@ def build(p: ScailParams) -> dict[str, dict[str, Any]]:
     n("parts", "GetVideoComponents", video=["video", 0])
     n("ref", "LoadImage", image=p.reference)
     n("sam", "CheckpointLoaderSimple", ckpt_name=SAM3)
-    n("drive_words", "CLIPTextEncode", clip=["sam", 1], text=p.track)
     n("ref_words", "CLIPTextEncode", clip=["sam", 1], text="person")
     n("ref_track", "SAM3_VideoTrack", images=["ref", 0], model=["sam", 0], conditioning=["ref_words", 0],
       detection_threshold=0.5, max_objects=p.people, detect_interval=1)
@@ -127,14 +136,37 @@ def build(p: ScailParams) -> dict[str, dict[str, Any]]:
     n("sigmas", "BasicScheduler", model=["fast", 0], scheduler="simple", steps=STEPS, denoise=1.0)
     n("sampler", "KSamplerSelect", sampler_name="euler")
 
+    if p.picks is not None:
+        # The chosen performers, tracked once over the whole clip from their first-frame masks and no words:
+        # SAM3 follows those individuals by look and motion, and one track can't swap people between chunks.
+        for k, pick in enumerate(p.picks):
+            n(f"pick{k}", "LoadImage", image=pick)
+        start = "pick0"
+        for k in range(1, len(p.picks)):
+            start = n(f"picks{k}", "ImageBatch", image1=[start, 0], image2=[f"pick{k}", 0])
+        n("start_masks", "ImageToMask", image=[start, 0], channel="red")
+        n("clip_frames", "ImageFromBatch", image=["parts", 0], batch_index=0, length=frames_for(p.chunks))
+        n("track", "SAM3_VideoTrack", images=["clip_frames", 0], model=["sam", 0], initial_mask=["start_masks", 0],
+          detection_threshold=0.5, max_objects=p.people, detect_interval=1)
+        n("masks", "SCAIL2ColoredMask", driving_track_data=["track", 0], ref_track_data=["ref_track", 0],
+          object_indices="", sort_by="left_to_right", replacement_mode=p.replace)
+    else:
+        n("drive_words", "CLIPTextEncode", clip=["sam", 1], text=p.track)
+
     joined = prev = ""  # everything so far; the previous chunk alone (what the next one anchors on)
     for i in range(p.chunks):
         c = f"c{i}"
         n(f"{c}_frames", "ImageFromBatch", image=["parts", 0], batch_index=STRIDE * i, length=CHUNK)
-        n(f"{c}_track", "SAM3_VideoTrack", images=[f"{c}_frames", 0], model=["sam", 0],
-          conditioning=["drive_words", 0], detection_threshold=0.5, max_objects=p.people, detect_interval=1)
-        n(f"{c}_masks", "SCAIL2ColoredMask", driving_track_data=[f"{c}_track", 0], ref_track_data=["ref_track", 0],
-          object_indices="", sort_by="left_to_right", replacement_mode=p.replace)
+        if p.picks is not None:  # this chunk's slice of the one coloured track
+            n(f"{c}_masks", "ImageFromBatch", image=["masks", 0], batch_index=STRIDE * i, length=CHUNK)
+            ref_mask = ["masks", 1]
+        else:
+            n(f"{c}_track", "SAM3_VideoTrack", images=[f"{c}_frames", 0], model=["sam", 0],
+              conditioning=["drive_words", 0], detection_threshold=0.5, max_objects=p.people, detect_interval=1)
+            n(f"{c}_masks", "SCAIL2ColoredMask", driving_track_data=[f"{c}_track", 0],
+              ref_track_data=["ref_track", 0], object_indices="", sort_by="left_to_right",
+              replacement_mode=p.replace)
+            ref_mask = [f"{c}_masks", 1]
         # Each chunk gets its own slice of the clip, so the offset stays 0, as in the blueprint: the node also
         # slices pose_video by video_frame_offset, and doing both left chunk 2 with 5 frames of motion
         # (measured: the second 5 s of a 10 s render ignored the performer).
@@ -143,7 +175,7 @@ def build(p: ScailParams) -> dict[str, dict[str, Any]]:
           height=h, length=CHUNK, batch_size=1, pose_strength=1.0, pose_start=0.0, pose_end=1.0,
           video_frame_offset=0, previous_frame_count=OVERLAP, pose_video=[f"{c}_frames", 0],
           pose_video_mask=[f"{c}_masks", 0], replacement_mode=p.replace, reference_image=["ref", 0],
-          reference_image_mask=[f"{c}_masks", 1], clip_vision_output=["cv_ref", 0], **later)
+          reference_image_mask=ref_mask, clip_vision_output=["cv_ref", 0], **later)
         n(f"{c}_sample", "SamplerCustom", model=["shift", 0], add_noise=True, noise_seed=p.seed + i, cfg=1.0,
           positive=[f"{c}_scail", 0], negative=[f"{c}_scail", 1], sampler=["sampler", 0], sigmas=["sigmas", 0],
           latent_image=[f"{c}_scail", 2])
@@ -159,10 +191,21 @@ def build(p: ScailParams) -> dict[str, dict[str, Any]]:
         prev = out
     n("out", "CreateVideo", images=[joined, 0], fps=16.0, audio=["parts", 1])
     n("save", "SaveVideo", video=["out", 0], filename_prefix=p.prefix, format="auto", codec="auto")
+    if p.keep_points is not None:
+        union, new, kept = keep.add(n, render=[joined, 0], old_track=["track", 0], sam=["sam", 0],
+                                    points=[[tuple(pt) for pt in pts] for pts in p.keep_points],
+                                    clip=["clip_frames", 0], others=p.others or None)
+        for key, images in ((KEEP_MASK_NODE, union), (KEEP_NEW_NODE, new), (KEEP_OTHERS_NODE, kept)):
+            n(f"{key}_video", "CreateVideo", images=[images, 0], fps=16.0)
+            n(key, "SaveVideo", video=[f"{key}_video", 0], filename_prefix=f"{p.prefix}_{key}", format="auto",
+              codec="auto")
     return g
 
 
 FINAL_NODE = "save"
+KEEP_MASK_NODE = "save_keep_mask"  # old and new performers: left out of the colour fit
+KEEP_NEW_NODE = "save_keep_new"  # the new characters alone: always as rendered
+KEEP_OTHERS_NODE = "save_keep_others"  # the people not recast: put back as filmed
 
 
 def reference_sheet(characters: list[Path], dst: Path, *, height: int = 1024) -> Path:
@@ -195,7 +238,7 @@ def prompt(texts: list[str], poses: list[str], *, replace: bool, place: str = ""
     sides = ["On the left", "On the right"] if len(texts) == 2 else ["In the frame"]
     lines = []
     for side, text, pose in zip(sides, texts, poses + [""] * len(texts)):
-        line = f"{side}, {text.strip().rstrip('.')}"
+        line = f"{side}, {describe.drop_negations(text.strip().rstrip('.'))}"
         if pose.strip():
             line += f", who {pose.strip().rstrip('.')}"
         lines.append(line + ".")

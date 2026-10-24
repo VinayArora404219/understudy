@@ -200,3 +200,79 @@ anime look, 480x832, 16 fps. Animate-2's Restyle animates one restyled first fra
   end, far away; VACE drew one large in the foreground at 4 s. The reader now leaves background motion out.
 - **Licenses:** the template's CausVid 14B LoRA is CC-BY-NC-4.0; replaced by lightx2v's Apache-2.0 T2V
   distill LoRA with no visible loss. Depth Anything V2 Small is Apache-2.0 (Base and Large are not).
+
+## Choosing who is recast, and keeping the clip around them (2026-10-23)
+
+Private regression set, six cases through the app: a dog-and-cat duo recast as two men (clip's place and
+the left character's place), a man on a street recast as a woman (clip's place and her own place), a man
+running on a football pitch with other players (15 s), and one man chosen out of a crowd of six.
+
+**Words can't pick a performer.** In the crowd, tracking "man" with one object followed a passer-by, then the
+man in front; the chosen man got the shirt, his neighbour got the glasses. "man in a grey suit" held the right
+man for 10 s, "man in a suit" did not, and the clip reader named a different man on each read. So the visitor
+chooses: `recast/people.py` finds everyone in the start frame (SAM3_Detect, prompt `person:8, animal:4`; a
+plain prompt returns one detection), and the chosen masks start SAM3's video tracker with no words, tracked
+once over the whole clip. All six cases rendered as before or better; the crowd case put the reference on the
+chosen man.
+
+**SCAIL-2 redraws the whole frame**, not only the masked performers: the reference's glasses also landed on a
+bystander, other players' kit changed colour, a white studio came back grey. `recast/keep.py` +
+`recast/composite.py` put the clip back outside the performers:
+
+| Step | Measured |
+|---|---|
+| Paste the clip back outside the old performers' mask, grown and blurred | bystander's glasses mostly gone; a white studio showed grey dog-and-cat shapes, where only the render's background exists |
+| + new characters found in the render (a man is bigger than the cat he replaces) | one point per character gave a part (a bib, a wall strip); three points spread over the body gave the whole person |
+| + per-frame colour fit (gain and offset, background pixels only) applied to the whole render | studio white again, but the men washed out |
+| + colour fit applied only where old performers stood and new ones don't | studio white, men as rendered |
+| + everyone else found in the start frame tracked and kept as filmed (grown 6 px) | the bystander's leaked glasses reduced to a small fragment where his face touches the chosen man |
+
+- **The reader's pose sentence hurts the clip's place.** Same seed, same everything: with "stands facing
+  forward, both hands at sides" (wrong: the first frame is a selfie), sunglasses put on mid-clip never
+  appeared; without it, they did, on time. The clip's place no longer sends pose words; another place still
+  does (they pose its start picture).
+- **Another place is worded by the characters, not the performers.** A dog-and-cat clip recast as two men was
+  worded "two animals... one paw low in front", and the racer came out on all fours.
+- **Open:** small accessories from the reference (glasses) appear in some renders and not others with the
+  same inputs; "Try another version" is the remedy for now.
+
+## Put back only the other people, not the room (2026-10-24)
+
+The composite above put the whole clip back outside the performers. On the duo it cost more than it fixed:
+a ghost of the dog's outline on the wall where the dog had stood, and a grey ring round both men. The render's
+wall is shaded unlike the clip's (darker towards one corner), and one colour fit per frame can't follow it.
+A tighter character mask plus a colour offset that varies across the frame (measured on the wall, spread by a
+40 px blur) halved both, and the men still looked pasted on: they are lit for the room the model drew.
+
+So the room now stays as rendered, and only the people who aren't recast go back as filmed, colour-matched
+to the render. Same four renders in the clip's place, no new render:
+
+| Case | Whole room put back | Only other people put back |
+|---|---|---|
+| Duo, two men for a dog and a cat | dog's outline on the wall, ring round the men | as rendered: neither (studio a little grey) |
+| Street, one person | ring round her | as rendered |
+| Football pitch, two players nearby | goalkeeper's kit as filmed | first try: goalkeeper in the render's blue, see below |
+| Crowd, one man chosen of six | leaked glasses gone | leaked glasses gone, faces as filmed |
+
+- **People who walk in later are never in the start frame.** The goalkeeper runs into shot mid-clip, so the
+  start-frame detector didn't find him and nothing put him back. Everyone is now also tracked through the
+  clip by words ("person, animal", looked for on every frame), minus the chosen performers' track grown
+  12 px, so no edge of them comes back. With that the goalkeeper's kit is as filmed, and on the duo the
+  bystander mask covers 0.03% of the frame (specks): nothing of the dog returns.
+
+## Only the character goes to the model, and words never say what is absent (2026-10-24)
+
+A man on a street puts on sunglasses mid-clip; recast in the clip's place as a racing driver, the driver put
+on a helmet at that moment instead. Two inputs said he owns a helmet and no glasses: his photo (a helmet sat
+on the desk beside him, and the whole photo was the reference) and his words, written by the vision model:
+"... no facial hair, no glasses, wears red, blue, white racing suit with matching helmet". A prompt can't
+say what isn't there; "no glasses" only adds the word.
+
+- The character is now cut out of their photo for the clip's place (`people.cut_out`: the biggest person or
+  animal SAM3 finds, on the room's own colour, cropped round them). Desk, helmet and the logo wall go.
+  Something in front of them (a microphone) left a hole in the mask: gaps under 18% of their width are
+  closed and painted in from around them (a soft smudge, invisible in the render).
+- `describe.drop_negations` removes "no X", "without X" and "with no X" from the written words and from the
+  render prompt; the character instruction now also says never an object beside them.
+- Same clip, pick and seed, new words "middle-aged Black man with short dark hair, wearing a red, blue, and
+  white racing suit with a V-shaped emblem on the chest": the sunglasses come and go on time, no helmet.
