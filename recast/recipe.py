@@ -39,19 +39,23 @@ def graph_sha(g: dict) -> str:
 
 def write(path: Path, *, params: Any, g: dict, inputs: dict[str, Path],
           outputs: dict[str, Path], job_id: str | None, seconds: float | None,
-          models: list[dict] | None = None) -> dict:
-    """`params` is the engine's dataclass (graph.RecastParams, scail.ScailParams); `models` its weights."""
+          models: list[dict] | None = None, finishing: dict | None = None) -> dict:
+    """`params` is the engine's dataclass (graph.RecastParams, scail.ScailParams); `models` its weights.
+    The recipe carries the exact API graph that ran (it opens in ComfyUI) and `finishing`: what was done to
+    its output outside ComfyUI, so a re-run knows every step between the graph and the delivered file."""
     p = asdict(params)
     p.pop("extra", None)
     p["reference"] = inputs["reference"].name
     p["drive"] = inputs["drive"].name
     recipe = {
-        "recipe_version": 1,
+        "recipe_version": 2,
         "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "params": p,
         "inputs": {k: {"file": v.name, "sha256": sha256(v)} for k, v in inputs.items()},
         "outputs": {k: {"file": v.name, "sha256": sha256(v)} for k, v in outputs.items()},
         "graph_sha256": graph_sha(g),
+        "graph": g,
+        "finishing": finishing or {},
         "models": models or MODELS,
         "runtime": {"comfy_sdk": version("comfy-sdk"), "python": platform.python_version()},
         "job_id": job_id,

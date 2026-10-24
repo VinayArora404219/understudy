@@ -94,7 +94,7 @@ export function LandingPage() {
           <p><span className="block font-medium text-ink-100">Open models only</span>
             SCAIL-2 recasts the performers, Wan VACE restyles the whole clip frame by frame, and Qwen-Image-Edit builds starting frames. All open weights, with no closed API anywhere; every model and license is in the recipe.</p>
           <p><span className="block font-medium text-ink-100">Reproducible</span>
-            Each result ships a recipe: input hashes, every setting, the seed and the exact workflow. Run it again and get the same video.</p>
+            Each result ships a recipe: input hashes, every setting, the seed, the models and the exact ComfyUI graph it ran, which opens in ComfyUI, plus every step done after it.</p>
           <p><span className="block font-medium text-ink-100">Honest output</span>
             We show the native resolution, when a file is upscaled, and how long it took. Results are labelled as AI-generated.</p>
         </div>

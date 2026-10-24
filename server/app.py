@@ -970,7 +970,11 @@ def _deliver(j, work, d, p, rp, g, ref, drive, engine, models, files, job_id, t0
         rp.others = list(work["others"])
     recipe.write(d / "recipe.json", params=rp, g=g,
                  inputs={"reference": ref, "drive": drive, **{f"pick{k}": d / n for k, n in enumerate(picks)}},
-                 outputs={"recast": final, "compare": compare}, job_id=job_id, seconds=seconds, models=models)
+                 outputs={"recast": final, "compare": compare}, job_id=job_id, seconds=seconds, models=models,
+                 finishing={
+                     "everyone_else_as_filmed": "recast/composite.py keep_others" if getattr(rp, "keep_points", None) else None,
+                     "audio": "the clip's own" if p["audio"] != "mute" else "none",
+                     "delivered": f"{delivered}, lanczos" if short else delivered})
     if _cancelled(j):
         return
     _update(j, state="done", progress=None, result={

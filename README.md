@@ -1,73 +1,103 @@
 # Performance Recast
 
-Film yourself doing something. Pick any character. Get the same performance back, played by that
-character, with your original audio, plus a side-by-side comparison and a `recipe.json` that
-reproduces it.
+Film something. Choose who in the clip is recast, and as whom. Get the same performance back, played by
+your characters, in your own room, with everyone you didn't choose left exactly as filmed, your original
+audio, a side-by-side comparison and a `recipe.json` with the exact graph that made it.
 
-Open weights only, end to end: Wan Animate-2 (Apache-2.0) for the motion transfer and
-Qwen-Image-Edit-2511 (Apache-2.0) for building the reference. Every job runs through the official
-[Comfy SDK](https://docs.comfy.org/development/api-development/sdks) against a self-hosted ComfyUI
-behind [`comfy-api-proxy`](https://github.com/Comfy-Org/comfy-api-proxy). There is no closed model
-anywhere in the path.
+Open weights only, end to end, run through the official
+[Comfy SDK](https://docs.comfy.org/development/api-development/sdks) against a self-hosted ComfyUI behind
+[`comfy-api-proxy`](https://github.com/Comfy-Org/comfy-api-proxy). No closed model or API anywhere in the path.
 
-> Status: early. Built for Comfy's *Open Source Higgsfield* challenge (Oct 2026).
+> Built for Comfy's *Open Source Higgsfield* challenge (Oct 2026), Open Weights category.
 
-## What it adds over the stock Animate-2 workflow
+## Three modes
 
-- **Automatic reference matching.** Animate-2 copies identity, framing *and background* from the
-  reference image. It works best when that image matches the clip's first frame in pose,
-  framing and subject count. `recast` builds that reference for you: the first frame is image 1
-  of a Qwen edit (pose, camera and room come from it), and your character is image 2 (identity
-  only). With `--scene keep` your own room survives. With `--scene new --background "..."` it
-  doesn't.
-- **Any length, one job.** Clips are cut into chained 81-frame segments. Each segment continues
-  the previous one's motion, and the duplicate boundary frames are dropped. Each segment is
-  checkpointed.
-- **Reproducible.** `recipe.json` records the input hashes, every parameter, the graph hash and
-  the model files used.
-- **Safe to host.** Graphs are built server-side from bounded parameters. Uploads are decoded,
-  capped and stripped of metadata, and no subprocess sees a shell.
+| Mode | What changes | How |
+|---|---|---|
+| **Recast** | Someone else performs your moves: a person, a mascot, an animal. One or two performers, in the clip's own place or in another one. | SCAIL-2 (Wan2.1 14B), tracked by SAM 3.1. Another place starts from a picture made with Qwen-Image-Edit-2511. |
+| **Restyle** | The whole video, redrawn in a look: anime, toy, pixel art, comic ink and more. | Wan2.1 VACE 14B, video to video on a depth map of every frame, so things that happen later in the clip still happen. |
+| **Swap** | You stay you. Change one thing: your outfit, or the place. | SCAIL-2 recasts you as yourself, so the clip still drives every frame. |
 
-## Quick start (CLI)
+## What it adds over the stock workflows
+
+- **You choose who is recast.** SAM 3.1 finds everyone in the start frame. You tap one or two people, and
+  their masks start the video tracker, with no words involved, so two people dressed alike are still told
+  apart. Words can't do this: tracking "man" in a crowd followed a passer-by, and the clip reader named a
+  different man on each read.
+- **Everyone else stays as filmed.** SCAIL-2 redraws the whole frame, so bystanders came back changed, some
+  wearing the new character's glasses. Everyone not chosen is tracked over the whole clip and put back as
+  filmed, colour-matched to the render. That includes people who walk in after the first frame.
+- **Each character lands on the right person.** SCAIL-2 decides who becomes whom by where the characters
+  sit on its reference picture, not by the tracking masks or the prompt; we tested both. So each character
+  is cut out of their photo and placed where their performer stands.
+- **The preview is the real start of your video.** In the clip's place, the preview renders the video's first
+  5 seconds, which is exactly the render's first chunk, with the same graph and seed. A 5 s video is that chunk,
+  so keeping it needs no second render. While it renders, the page shows who replaces whom, plus the job's
+  progress through each phase.
+- **Restyle reads your clip.** Depth can't see sunglasses against a face, so Qwen3-VL looks at four moments of
+  the clip and names what the performers put on, take off or pick up; you can edit that line. Background events
+  are left out on purpose: naming a far-off cyclist pulled him into the foreground.
+- **It never says what isn't there.** "No glasses" in a prompt only adds the word glasses. Negations are
+  removed from the character's words and the render prompt, and the character is cut out of their photo, so a
+  helmet on the desk beside them
+  can't become their headgear.
+- **Reproducible.** `recipe.json` records the input hashes, every setting, the seed, the models, the exact
+  ComfyUI API graph it ran (it opens in ComfyUI), and each step done after it.
+
+Every problem met while building this, and how each was fixed, is in
+[docs/PROBLEMS_AND_FIXES.md](docs/PROBLEMS_AND_FIXES.md). The measurements behind each claim are in
+[bench/RESULTS.md](bench/RESULTS.md).
+
+## How it runs
+
+```
+web app (React)  ->  server/app.py (FastAPI)  ->  comfy-sdk  ->  comfy-api-proxy  ->  ComfyUI
+```
+
+The server builds every graph from bounded parameters (`recast/`), so nothing a visitor sends reaches ComfyUI
+as a raw workflow. GPU work runs in two lanes: **quick** (finding people, reading pictures and clips,
+image-edit previews) and **heavy** (renders, and the clip's-place preview, which is a render). Each lane runs
+one task at a time, so a picker never waits behind a render. The only machine settings are the endpoints:
+`COMFY_BASE_URL` (plus `COMFY_API_KEY`) and, optionally, `COMFY_QUICK_BASE_URL` for a second GPU. The
+judge build runs both lanes on Modal ([deploy/modal/](deploy/modal/)).
+
+## Run it yourself
+
+You need a ComfyUI (v0.41.3) with the models in [manifests/models.json](manifests/models.json) (pinned Hugging
+Face revisions, sizes and SHA-256 hashes) and the three custom node packs listed there, plus `comfy-api-proxy`
+next to it.
 
 ```bash
 uv venv && uv pip install -e ".[dev]"
-# on the GPU host, next to ComfyUI:  pip install comfy-api-proxy && comfy-api-proxy
-export COMFY_BASE_URL=http://127.0.0.1:8189
-
-recast run --drive me_dancing.mp4 \
-  --character my_robot.png --character-text "a slim silver robot with a round blue head" \
-  --appearance "Character appearance description: a slim silver robot ...\nBackground description: ..." \
-  --motion "A robot dances, swaying its hips and waving both arms" \
-  --out runs/robot
+(cd web && npm install)
+cp .env.example .env          # set COMFY_BASE_URL to your comfy-api-proxy
+tools/serve_local.sh          # backend on :8780, web app on http://localhost:5180
 ```
 
-Outputs land in `runs/robot/`: `recast.mp4`, `compare.mp4`, `reference.png`, `recipe.json`.
-`--dry-run` writes the graphs without touching a GPU.
+The `recast` CLI (`recast run`, `recast match`, `recast styles`) is the first version of the pipeline, on Wan
+Animate-2, kept for comparison. `--dry-run` writes its graphs without a GPU.
 
-## Requirements
-
-A ComfyUI install with the models in [`manifests/models.json`](manifests/models.json), plus
-ComfyUI-VideoHelperSuite and ComfyUI-GGUF. Measured on a 16 GB RTX 4070 Ti SUPER: about 5–9
-minutes per 5-second segment at 480×832, with peak VRAM of 13.5–15.9 GB.
+Measured on a 16 GB RTX 4070 Ti SUPER, which offloads part of the 14B models: a 5 s Recast takes about 6 minutes,
+and its preview takes about as long, since it is that render.
 
 ## Limits (honest list)
 
-- One performer per clip. Two performers driving one character makes it follow one of them, and
-  you can't choose which.
-- Locked or slow camera. The background comes from a single reference still.
-- 480p-class output at 16 fps (Animate-2's native rate). Anything larger is an upscale, and the
-  output says so.
+- One or two recast performers per clip. Anyone hidden behind another person in the start frame isn't
+  found, so they can't be chosen.
+- 480p at 16 fps native, SCAIL-2's own size and rate. 720p output is a lanczos upscale, and the result page
+  says so. Fast hands smear.
+- One character's likeness drifts younger in some runs. Logos and printed text on clothes turn into invented
+  text. Small accessories from a reference photo (glasses) appear in some renders and not others.
+- In the clip's place the room keeps the render's colour, so a white studio comes back slightly grey.
+- Jobs on the same lane queue: two visitors rendering at once wait for each other.
 
 ## Licence
 
-MIT for this repository's code. Models and custom nodes keep their own licences; see
-`manifests/models.json`.
+MIT for this repository's code ([LICENSE](LICENSE)). Models, ComfyUI and the custom nodes keep their own
+licences, and every model used allows commercial use: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Contributing / publishing rules
 
-Nothing machine-specific, private or unlicensed enters git: no media, no weights, no IPs, paths or
-usernames, no third-party clips. `tools/install_hooks.sh` installs a pre-commit check
-(`tools/check_public.py`) that enforces this. Machine details live in `.env` (see `.env.example`).
-Measured findings go in `bench/RESULTS.md`; every problem met so far and how it was fixed is in
-`docs/PROBLEMS_AND_FIXES.md`.
+Nothing machine-specific, private or unlicensed enters git: no media, no weights, no IPs, paths or usernames, no
+third-party clips. `tools/install_hooks.sh` installs a pre-commit check (`tools/check_public.py`) that enforces
+this. Machine details live in `.env` (see `.env.example`).

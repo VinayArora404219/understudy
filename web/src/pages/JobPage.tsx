@@ -162,7 +162,7 @@ function Result({ job }: { job: Job }) {
             <dt className="text-ink-500">Models</dt><dd>{r.models ?? "Wan Animate-2, Qwen-Image-Edit-2511"}</dd>
             <dt className="text-ink-500">Seed</dt><dd className="font-mono">{job.preview?.seed ?? "—"}</dd>
           </dl>
-          <p className="mt-4 text-xs text-ink-500">AI-generated, open weights. The recipe reproduces this exact video.</p>
+          <p className="mt-4 text-xs text-ink-500">AI-generated, open weights. The recipe has the exact graph, inputs and settings behind this video.</p>
         </Card>
         <a href={r.video_url} download className="flex h-12 w-full items-center justify-center rounded-[var(--radius-control)] bg-accent font-medium text-accent-ink hover:brightness-105">
           Download video
