@@ -31,9 +31,9 @@ export function AppShell() {
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
             {session && session.kind !== "guest" && (
-              <span className="hidden sm:inline text-ink-300" title="Renders left on this link">
-                <span className="text-ink-100 font-medium tabular-nums">{session.renders_left}</span>
-                <span className="text-ink-500"> / {session.renders_total} renders left</span>
+              <span className="hidden sm:inline text-ink-300" title="1 credit = 1 second of finished video. Previews are free.">
+                <span className="text-ink-100 font-medium tabular-nums">{session.credits_left}</span>
+                <span className="text-ink-500"> / {session.credits_total} credits left</span>
               </span>
             )}
             {session && <span className="rounded-full bg-ink-800 px-3 py-1.5 text-xs text-ink-300">{session.name}</span>}

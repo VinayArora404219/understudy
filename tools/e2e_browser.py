@@ -108,8 +108,8 @@ def run_case(page: Page, base: str, case: dict, out: Path) -> dict:
             chosen = [int(re.match(r"Person (\d+)", people.nth(k).get_attribute("aria-label")).group(1))
                       for k in range(found) if people.nth(k).get_attribute("aria-pressed") == "true"]
             step("people", found=found, chosen=chosen)
-        if case.get("length", 5) > 5:
-            page.get_by_role("button", name=re.compile(rf"^{case['length']} s")).click()
+        if case.get("length", 5) != 5:  # seconds, on the slider
+            page.get_by_label("Seconds of the clip to use").fill(str(case["length"]))
         page.get_by_role("button", name="Continue").click()
 
         two = case["mode"] == "recast" and len(case.get("characters", [])) == 2

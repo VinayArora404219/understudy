@@ -227,3 +227,20 @@ def test_recast_with_an_outfit_dresses_each_character_once(app, monkeypatch, tmp
 
     p = _params([1], outfit={"text": "a red raincoat"})
     assert "wearing a red raincoat" in app._summary(p) and "stays themselves" not in app._summary(p)
+
+
+def test_a_render_costs_the_seconds_it_delivers(app):
+    c = TestClient(app.app)
+    app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": [{"id": 1}]}}
+
+    def cost(length, **kw):
+        r = c.post("/api/jobs", json=_params([1], motion={"upload_id": "up_clip", "start": 0, "length": length,
+                                                          "picks": [1]}, **kw))
+        return r.json()["cost_seconds"] if r.status_code == 200 else r.status_code
+
+    assert cost(7) == 7  # 113 frames: a whole chunk and a short one
+    assert app._plan(_params([1], motion={"length": 5}), 10) == [81]  # 5 s is one whole chunk, as before
+    assert cost(5) == 5 and cost(2) == 2
+    assert cost(20) == 10  # the clip has 10 seconds: only those are charged
+    assert cost(1) == cost(21) == cost("5") == 400
+    assert app._cost({"cost_renders": 2}) == 10  # jobs from before credits

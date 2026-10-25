@@ -59,6 +59,10 @@ def frames_for(chunks: int) -> int:
     return CHUNK + STRIDE * (chunks - 1)
 
 
+def lengths_for(frames: int) -> list[int]:
+    return graph.chunk_lengths(frames, chunk=CHUNK, overlap=OVERLAP)
+
+
 def size(layout: str) -> tuple[int, int]:
     w, h = graph.SIZES[layout]
     return w // 16 * 16, h // 16 * 16
@@ -71,14 +75,20 @@ class VaceParams:
     prompt: str
     layout: str
     chunks: int = 1
+    frames: int = 0  # the video's length; 0: whole chunks. Otherwise the last chunk is as short as it can be
     seed: int = 1
     prefix: str = "recast/restyle"
+
+    def lengths(self) -> list[int]:
+        return lengths_for(self.frames or frames_for(self.chunks))
 
     def validate(self) -> None:
         if self.layout not in graph.SIZES:
             raise VaceError(f"layout must be one of {sorted(graph.SIZES)}")
         if not 1 <= self.chunks <= MAX_CHUNKS:
             raise VaceError(f"chunks must be 1..{MAX_CHUNKS}")
+        if self.frames and len(lengths_for(self.frames)) != self.chunks:
+            raise VaceError(f"{self.frames} frames don't make {self.chunks} chunks")
         if not self.prompt.strip() or len(self.prompt) > MAX_TEXT:
             raise VaceError(f"the prompt must be 1..{MAX_TEXT} characters")
         if not 0 <= self.seed <= graph.MAX_SEED - MAX_CHUNKS:
@@ -108,29 +118,34 @@ def build(p: VaceParams) -> dict[str, dict[str, Any]]:
     n("vae", "VAELoader", vae_name=graph.VAE)
     n("video", "LoadVideo", file=p.drive)
     n("parts", "GetVideoComponents", video=["video", 0])
-    n("clip_frames", "ImageFromBatch", image=["parts", 0], batch_index=0, length=frames_for(p.chunks))
+    lengths = p.lengths()
+    n("clip_frames", "ImageFromBatch", image=["parts", 0], batch_index=0,
+      length=graph.covered(lengths, chunk=CHUNK, overlap=OVERLAP))
     n("depth_raw", "DepthAnythingV2Preprocessor", image=["clip_frames", 0], ckpt_name=DEPTH, resolution=512)
     n("depth", "ImageScale", image=["depth_raw", 0], upscale_method="bilinear", width=w, height=h, crop="disabled")
     n("ref", "LoadImage", image=p.reference)
     if p.chunks > 1:  # the extension mask: OVERLAP frames kept as given, the rest generated from depth
         n("keep", "EmptyImage", width=w, height=h, batch_size=OVERLAP, color=0)
-        n("make", "EmptyImage", width=w, height=h, batch_size=STRIDE, color=0xFFFFFF)
-        n("mask_img", "ImageBatch", image1=["keep", 0], image2=["make", 0])
-        n("mask", "ImageToMask", image=["mask_img", 0], channel="red")
+        for length in sorted(set(lengths[1:])):  # whole chunks share one; a shorter last chunk has its own
+            k = "" if length == CHUNK else f"_{length}"
+            n(f"make{k}", "EmptyImage", width=w, height=h, batch_size=length - OVERLAP, color=0xFFFFFF)
+            n(f"mask_img{k}", "ImageBatch", image1=["keep", 0], image2=[f"make{k}", 0])
+            n(f"mask{k}", "ImageToMask", image=[f"mask_img{k}", 0], channel="red")
 
     joined = prev = ""  # everything so far; the previous chunk alone (what the next one starts from)
-    for i in range(p.chunks):
+    for i, length in enumerate(lengths):
         c = f"c{i}"
         if i == 0:
-            n(f"{c}_control", "ImageFromBatch", image=["depth", 0], batch_index=0, length=CHUNK)
+            n(f"{c}_control", "ImageFromBatch", image=["depth", 0], batch_index=0, length=length)
             extra: dict[str, Any] = {}
         else:
             n(f"{c}_anchor", "ImageFromBatch", image=[prev, 0], batch_index=-OVERLAP, length=OVERLAP)
-            n(f"{c}_depth", "ImageFromBatch", image=["depth", 0], batch_index=STRIDE * i + OVERLAP, length=STRIDE)
+            n(f"{c}_depth", "ImageFromBatch", image=["depth", 0], batch_index=STRIDE * i + OVERLAP,
+              length=length - OVERLAP)
             n(f"{c}_control", "ImageBatch", image1=[f"{c}_anchor", 0], image2=[f"{c}_depth", 0])
-            extra = {"control_masks": ["mask", 0]}
+            extra = {"control_masks": ["mask" if length == CHUNK else f"mask_{length}", 0]}
         n(f"{c}_vace", "WanVaceToVideo", positive=["pos", 0], negative=["neg", 0], vae=["vae", 0], width=w,
-          height=h, length=CHUNK, batch_size=1, strength=1.0, control_video=[f"{c}_control", 0],
+          height=h, length=length, batch_size=1, strength=1.0, control_video=[f"{c}_control", 0],
           reference_image=["ref", 0], **extra)
         n(f"{c}_ks", "KSampler", model=["shift", 0], seed=p.seed + i, steps=STEPS, cfg=1.0, sampler_name="uni_pc",
           scheduler="simple", positive=[f"{c}_vace", 0], negative=[f"{c}_vace", 1], latent_image=[f"{c}_vace", 2],

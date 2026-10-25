@@ -41,7 +41,8 @@ export function JudgeEntryPage() {
             <p className="mt-4 text-ink-300">
               This link is yours for the whole judging period and works on any device. What you make with it is
               seen only through it.
-              {session?.renders_total ? <> It includes <span className="text-ink-100">{session.renders_total} renders</span>; previews are free.</> : null}
+              {session?.credits_total ? <> It includes <span className="text-ink-100">{session.credits_total} credits</span>, one per
+                second of finished video; previews are free.</> : null}
             </p>
             <ol className="mx-auto mt-8 max-w-sm space-y-3 text-left text-sm text-ink-300">
               <li><span className="text-ink-100">1.</span> Pick a motion: your own clip or one of ours.</li>

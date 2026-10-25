@@ -81,7 +81,7 @@ export type Mode = "recast" | "restyle" | "swap";
 export interface JobParams {
   mode: Mode;
   /** picks: Recast's chosen people (Person.id) in the start frame; they set `performers`. */
-  motion: { upload_id?: string; preset_id?: string; start: number; length: 5 | 10 | 15 | 20; picks?: number[] };
+  motion: { upload_id?: string; preset_id?: string; start: number; length: number; picks?: number[] }; // seconds, 2..20
   performers: 1 | 2; // who is replaced (Recast) or in the clip
   subject: "person" | "animal"; // with picks, the server reads it from the clip
   /** One per performer, or none. With two performers: [the one on the picture's left, the one on its right]. */
@@ -155,7 +155,7 @@ export interface Job {
   state: JobState;
   title: string; // "Anime Cel · 5 s"
   params: JobParams;
-  cost_renders: number;
+  cost_seconds: number; // credits: 1 credit = 1 second of finished video
   aspect?: [number, number]; // delivered width, height: known once the clip is prepared
   inputs?: { label: string; kind: "video" | "image"; thumb_url: string }[]; // what went in, for the result page
   preview?: JobPreview;
@@ -174,8 +174,8 @@ export interface SceneLine {
 export interface Session {
   kind: "judge" | "user" | "guest";
   name: string;
-  renders_left: number;
-  renders_total: number;
+  credits_left: number;
+  credits_total: number;
 }
 
 export interface GalleryItem {

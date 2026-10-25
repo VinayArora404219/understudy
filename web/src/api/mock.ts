@@ -36,7 +36,7 @@ const PRESETS: MotionPreset[] = [
     thumb_url: poster("#1e3a8a", "#7dd3fc", "Slow spin"), preview_url: "" },
 ];
 
-const session: Session = { kind: "judge", name: "Judge preview", renders_left: 25, renders_total: 25 };
+const session: Session = { kind: "judge", name: "Judge preview", credits_left: 300, credits_total: 300 };
 const uploads = new Map<string, Upload>();
 const jobs = new Map<string, Job>();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -196,7 +196,7 @@ export const mockApi: Api = {
 
   async createJob(params) {
     const j: Job = { id: id("job"), created_at: new Date().toISOString(), state: "draft", title: title(params),
-      params, cost_renders: params.motion.length / 5 };
+      params, cost_seconds: params.motion.length };
     jobs.set(j.id, j);
     return { ...j };
   },
@@ -217,8 +217,8 @@ export const mockApi: Api = {
 
   async approve(jobId) {
     const j = jobs.get(jobId)!;
-    if (session.renders_left < j.cost_renders) throw new Error("No renders left on this link.");
-    session.renders_left -= j.cost_renders;
+    if (session.credits_left < j.cost_seconds) throw new Error(`This video needs ${j.cost_seconds} credits and ${session.credits_left} are left. Pick a shorter length.`);
+    session.credits_left -= j.cost_seconds;
     j.state = "queued";
     void runRender(jobId);
     return { ...j };
@@ -233,7 +233,7 @@ export const mockApi: Api = {
   async cancel(jobId) {
     const j = jobs.get(jobId)!;
     if (j.state !== "done") {
-      if (["queued", "rendering", "finishing"].includes(j.state)) session.renders_left += j.cost_renders;
+      if (["queued", "rendering", "finishing"].includes(j.state)) session.credits_left += j.cost_seconds;
       j.state = "cancelled";
       j.error = { message: "Cancelled.", refunded: true };
     }

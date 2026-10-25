@@ -359,6 +359,23 @@ character and outfit, so another version and the render reuse them.
 | Words read back | "An elderly man with white hair and beard, wearing a yellow hooded raincoat, dark pants, and yellow boots" |
 | Time | 166 s from cold, both models loading |
 
+In a real Recast (street clip, same character photo: a woman in a white off-shoulder top, seed 1):
+
+| Clothes asked for | Preview |
+|---|---|
+| Photo dressed first ("a yellow raincoat"), words read from it | she wears the yellow hooded raincoat from the first frame on |
+| Words only: her own words with "wears a bright yellow hooded raincoat", photo as uploaded | she keeps the white top from the photo, and the yellow went onto her trousers, as joggers with drawstrings |
+
+The reference picture decides the clothes; words that disagree with it only move a colour somewhere else.
+
+## Any length: a short last chunk (2026-10-25)
+
+A video is rendered in 81-frame chunks, each later one anchored on the previous chunk's last 5 frames; the
+last chunk is now only as long as needed (1 + 4n frames). 7 s of the street clip rendered as 81 + 37 frames:
+113 frames, 7.06 s, with sound. At the join (frames 79 and 81) and through the short chunk (96, 112) the
+jacket, jeans, street and light stay the same. Whole chunks build byte-identical graphs to before.
+
+
 ## Running on Modal (2026-10-24)
 
 The judge build renders on Modal (`deploy/modal/`): ComfyUI 0.41.3 + comfy-api-proxy 0.1.6 per container, same

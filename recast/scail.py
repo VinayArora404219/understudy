@@ -61,6 +61,10 @@ def frames_for(chunks: int) -> int:
     return CHUNK + STRIDE * (chunks - 1)
 
 
+def lengths_for(frames: int) -> list[int]:
+    return graph.chunk_lengths(frames, chunk=CHUNK, overlap=OVERLAP)
+
+
 @dataclass
 class ScailParams:
     drive: Any  # normalised clip: render size, 16 fps, at least frames_for(chunks) frames
@@ -71,6 +75,7 @@ class ScailParams:
     replace: bool
     layout: str
     chunks: int = 1
+    frames: int = 0  # the video's length; 0: whole chunks. Otherwise the last chunk is as short as it can be
     seed: int = 1
     prefix: str = "recast/scail"
     unet: str = UNET
@@ -80,11 +85,16 @@ class ScailParams:
     keep_points: list[list[list[int]]] | None = None
     others: list[Any] | None = None  # start masks of everyone not recast: always kept as filmed
 
+    def lengths(self) -> list[int]:
+        return lengths_for(self.frames or frames_for(self.chunks))
+
     def validate(self) -> None:
         if self.layout not in graph.SIZES:
             raise ScailError(f"layout must be one of {sorted(graph.SIZES)}")
         if not 1 <= self.chunks <= MAX_CHUNKS:
             raise ScailError(f"chunks must be 1..{MAX_CHUNKS}")
+        if self.frames and len(lengths_for(self.frames)) != self.chunks:
+            raise ScailError(f"{self.frames} frames don't make {self.chunks} chunks")
         if self.people not in (1, 2):
             raise ScailError("one or two people")
         if not self.prompt.strip() or len(self.prompt) > MAX_TEXT:
@@ -109,6 +119,7 @@ def size(layout: str) -> tuple[int, int]:
 def build(p: ScailParams) -> dict[str, dict[str, Any]]:
     p.validate()
     w, h = size(p.layout)
+    lengths = p.lengths()
     g: dict[str, dict[str, Any]] = {}
 
     def n(key: str, cls: str, **inputs: Any) -> str:
@@ -145,7 +156,8 @@ def build(p: ScailParams) -> dict[str, dict[str, Any]]:
         for k in range(1, len(p.picks)):
             start = n(f"picks{k}", "ImageBatch", image1=[start, 0], image2=[f"pick{k}", 0])
         n("start_masks", "ImageToMask", image=[start, 0], channel="red")
-        n("clip_frames", "ImageFromBatch", image=["parts", 0], batch_index=0, length=frames_for(p.chunks))
+        n("clip_frames", "ImageFromBatch", image=["parts", 0], batch_index=0,
+          length=graph.covered(lengths, chunk=CHUNK, overlap=OVERLAP))
         n("track", "SAM3_VideoTrack", images=["clip_frames", 0], model=["sam", 0], initial_mask=["start_masks", 0],
           detection_threshold=0.5, max_objects=p.people, detect_interval=1)
         n("masks", "SCAIL2ColoredMask", driving_track_data=["track", 0], ref_track_data=["ref_track", 0],
@@ -154,11 +166,11 @@ def build(p: ScailParams) -> dict[str, dict[str, Any]]:
         n("drive_words", "CLIPTextEncode", clip=["sam", 1], text=p.track)
 
     joined = prev = ""  # everything so far; the previous chunk alone (what the next one anchors on)
-    for i in range(p.chunks):
+    for i, length in enumerate(lengths):
         c = f"c{i}"
-        n(f"{c}_frames", "ImageFromBatch", image=["parts", 0], batch_index=STRIDE * i, length=CHUNK)
+        n(f"{c}_frames", "ImageFromBatch", image=["parts", 0], batch_index=STRIDE * i, length=length)
         if p.picks is not None:  # this chunk's slice of the one coloured track
-            n(f"{c}_masks", "ImageFromBatch", image=["masks", 0], batch_index=STRIDE * i, length=CHUNK)
+            n(f"{c}_masks", "ImageFromBatch", image=["masks", 0], batch_index=STRIDE * i, length=length)
             ref_mask = ["masks", 1]
         else:
             n(f"{c}_track", "SAM3_VideoTrack", images=[f"{c}_frames", 0], model=["sam", 0],
@@ -172,7 +184,7 @@ def build(p: ScailParams) -> dict[str, dict[str, Any]]:
         # (measured: the second 5 s of a 10 s render ignored the performer).
         later = {} if i == 0 else {"previous_frames": [prev, 0]}
         n(f"{c}_scail", "WanSCAILToVideo", positive=["pos", 0], negative=["neg", 0], vae=["vae", 0], width=w,
-          height=h, length=CHUNK, batch_size=1, pose_strength=1.0, pose_start=0.0, pose_end=1.0,
+          height=h, length=length, batch_size=1, pose_strength=1.0, pose_start=0.0, pose_end=1.0,
           video_frame_offset=0, previous_frame_count=OVERLAP, pose_video=[f"{c}_frames", 0],
           pose_video_mask=[f"{c}_masks", 0], replacement_mode=p.replace, reference_image=["ref", 0],
           reference_image_mask=ref_mask, clip_vision_output=["cv_ref", 0], **later)

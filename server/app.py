@@ -21,6 +21,7 @@ import logging
 import os
 import queue
 import random
+import secrets
 import shutil
 import threading
 import time
@@ -44,10 +45,12 @@ from .links import LOCAL, Links
 log = logging.getLogger("recast.server")
 
 DATA = Path(os.environ.get("RECAST_DATA", "runs/app")).resolve()
-RENDERS_TOTAL = int(os.environ.get("RECAST_RENDERS", "50"))
+# Credits are seconds of finished video: a render costs its own length, previews cost nothing.
+# RECAST_RENDERS (renders of 5 s) is still read, for servers set up before credits.
+CREDITS_TOTAL = int(os.environ.get("RECAST_CREDITS") or int(os.environ.get("RECAST_RENDERS", "50")) * 5)
 FPS = 16
 STEPS = 10
-SEGMENTS = {5: 1, 10: 2, 15: 3, 20: 4}  # UI length chip -> Animate-2 segments (81 + 80n frames at 16 fps)
+SHORTEST, LONGEST = 2, 20  # seconds a visitor can ask for
 FINISH_SHORT_SIDE = {"720p": 720, "1080p": 1080}
 CHARGED = {"queued", "rendering", "finishing", "done"}  # failed and cancelled renders cost nothing
 ACTIVE_STATES = {"matching", "queued", "rendering", "finishing"}
@@ -62,6 +65,12 @@ LINKS_ON = os.environ.get("RECAST_LINKS", "") == "1"
 LINKS = Links(DATA / "links.json")
 COOKIE = "recast_link"
 OPEN_API = {"/api/session", "/api/links/claim", "/api/gallery", "/api/presets", "/api/styles"}
+# The admin page (make, list and revoke links): off unless a password is set. Signing in sets a cookie that
+# only the admin API sees, for ADMIN_HOURS; sessions live in memory, so a restart signs everyone out.
+ADMIN_PASSWORD = os.environ.get("RECAST_ADMIN_PASSWORD", "")
+ADMIN_COOKIE = "recast_admin"
+ADMIN_HOURS = 12
+ADMIN_SESSIONS: dict[str, float] = {}  # cookie -> when it stops working (time.time())
 # the link id, LOCAL, or "" for a visitor without a link; None only outside a request (a GPU worker)
 _OWNER: "ContextVar[str | None]" = ContextVar("recast_owner", default=None)
 
@@ -120,6 +129,8 @@ def _public(record: dict) -> dict:
         out["aspect"] = list(media.delivery_size(layout))
     if "params" in record:
         out["inputs"] = _inputs(record["params"])
+        out["cost_seconds"] = _cost(record)
+        out.pop("cost_renders", None)
     return out
 
 
@@ -151,16 +162,41 @@ def _cancelled(j: dict) -> bool:
         return j["state"] == "cancelled"
 
 
-def _renders_left() -> int:
-    """Renders left on this server, and within the current link's own cap."""
+def _cost(j: dict) -> int:
+    """A job's credits; jobs from before credits were charged in renders of 5 s."""
+    return j["cost_seconds"] if "cost_seconds" in j else j.get("cost_renders", 0) * 5
+
+
+def _credits_left() -> int:
+    """Credits left on this server, and within the current link's own cap."""
     me = _OWNER.get()
     with LOCK:
         charged = [j for j in JOBS.values() if j["state"] in CHARGED]
-    left = RENDERS_TOTAL - sum(j["cost_renders"] for j in charged)
+    left = CREDITS_TOTAL - sum(_cost(j) for j in charged)
     link = LINKS.get(me)
     if link:
-        left = min(left, link["cap"] - sum(j["cost_renders"] for j in charged if j.get("_owner", LOCAL) == me))
+        left = min(left, Links.credits(link) - sum(_cost(j) for j in charged if j.get("_owner", LOCAL) == me))
     return max(0, left)
+
+
+def _engine(p: dict):
+    """The video model a job renders with: Restyle on Wan VACE, the rest on SCAIL-2."""
+    return vace if _mode(p) == "restyle" else scail
+
+
+def _plan(p: dict, usable: float) -> list[int]:
+    """Frames in each chunk: as many seconds as asked and the clip has, the last chunk only as long as needed.
+    One frame more than the seconds ask for, so every chunk is whole latent frames (1 + 4n) with none dropped:
+    5 s is one 81-frame chunk, as before."""
+    engine = _engine(p)
+    frames = min(round(float(p["motion"]["length"]) * FPS) + 1, int(usable * FPS),
+                 engine.frames_for(engine.MAX_CHUNKS))
+    return engine.lengths_for(frames)
+
+
+def _covered(p: dict, lengths: list[int]) -> int:
+    engine = _engine(p)
+    return graph.covered(lengths, chunk=engine.CHUNK, overlap=engine.OVERLAP)
 
 
 def _load() -> None:
@@ -265,13 +301,14 @@ def _prepare(j: dict) -> dict:
     usable = info.seconds - start
     if usable < media.MIN_SECONDS:
         raise UserError("The start point is too close to the end of the clip. Pick an earlier start.")
-    segments = min(SEGMENTS[p["motion"]["length"]], graph.segments_for(round(usable * FPS)))
-    seconds = min(usable, graph.frames_for(segments) / FPS)
+    lengths = _plan(p, usable)
+    frames = _covered(p, lengths)
+    segments, seconds = len(lengths), frames / FPS
     tmp = d / "drive.mp4"
     media.normalize(src, tmp, layout=layout, seconds=seconds, start=start, fps=FPS, box=box)
     drive = _named(tmp, "drive")
     frame = _named(media.frame_at(src, d / "frame.png", layout=layout, start=start, box=box), "frame")
-    work = {"drive": drive.name, "frame": frame.name, "layout": layout, "segments": segments,
+    work = {"drive": drive.name, "frame": frame.name, "layout": layout, "segments": segments, "frames": frames,
             "seconds": round(seconds, 2), "has_audio": info.has_audio}
     picks = p["motion"].get("picks")
     if picks:  # the chosen performers' start masks, at the size SAM3 tracks the clip in
@@ -850,6 +887,7 @@ def run_render(j: dict, _arg: Any = None) -> None:
         engine, steps, models = scail, scail.STEPS, scail.MODELS
     elif work.get("engine") == "vace":
         rp = vace.VaceParams(drive=drive.name, reference=ref.name, layout=work["layout"], chunks=work["segments"],
+                             frames=work.get("frames", 0),
                              prompt=vace.prompt(work["scene"], p["style"]),
                              seed=p.get("seed") or graph.DEFAULT_SEED, prefix=f"recast/app_{j['id']}")
         engine, steps, models = vace, vace.STEPS, vace.MODELS
@@ -873,6 +911,8 @@ def _scail_params(j: dict, work: dict, d: Path, p: dict, ref: Path, drive: Path,
     keeping = bool(work.get("picks") and work["replace"])
     return scail.ScailParams(
         drive=drive.name, reference=ref.name, layout=work["layout"], chunks=chunks or work["segments"],
+        # the first chunk alone is as long as it is in the whole video (a video under 5 s is one short chunk)
+        frames=(scail.lengths_for(work["frames"])[0] if chunks == 1 else work["frames"]) if work.get("frames") else 0,
         prompt=scail.prompt(work.get("texts") or [c["text"] for c in _characters(p)], work.get("poses") or [],
                             replace=work["replace"], place=background if scene == "new" else ""),
         track=work["track"], people=work["people"], replace=work["replace"], picks=work.get("picks"),
@@ -1171,7 +1211,8 @@ async def _who(request: Request, call_next):
     link = LINKS.find(request.cookies.get(COOKIE, ""))
     owner = link["id"] if link else ("" if LINKS_ON else LOCAL)  # "": a visitor without a link, owns nothing
     path = request.url.path
-    if owner == "" and path.startswith("/api/") and path not in OPEN_API and not path.startswith("/api/files/gallery/"):
+    if (owner == "" and path.startswith("/api/") and path not in OPEN_API and not path.startswith("/api/files/gallery/")
+            and not path.startswith("/api/admin/")):  # the admin routes check their own sign-in
         return JSONResponse({"message": "Open the link you were sent to use this demo."}, status_code=401)
     token = _OWNER.set(owner)
     try:
@@ -1194,10 +1235,10 @@ async def _http_error(_req, e: HTTPException):
 def session() -> dict:
     link = LINKS.get(_OWNER.get())
     if link:
-        return {"kind": "judge", "name": link["name"], "renders_left": _renders_left(), "renders_total": link["cap"]}
+        return {"kind": "judge", "name": link["name"], "credits_left": _credits_left(), "credits_total": Links.credits(link)}
     if LINKS_ON:  # nobody has opened a link in this browser
-        return {"kind": "guest", "name": "Not signed in", "renders_left": 0, "renders_total": 0}
-    return {"kind": "user", "name": "Local GPU", "renders_left": _renders_left(), "renders_total": RENDERS_TOTAL}
+        return {"kind": "guest", "name": "Not signed in", "credits_left": 0, "credits_total": 0}
+    return {"kind": "user", "name": "Local GPU", "credits_left": _credits_left(), "credits_total": CREDITS_TOTAL}
 
 
 @app.post("/api/links/claim")
@@ -1209,9 +1250,101 @@ def claim_link(body: dict, request: Request) -> JSONResponse:
         raise HTTPException(404, "This link doesn't work: it may have expired. Ask for a new one.")
     out = JSONResponse({"kind": "judge", "name": link["name"]})
     left = datetime.fromisoformat(link["expires"]) - datetime.now(timezone.utc)
-    https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
-    out.set_cookie(COOKIE, token, max_age=int(left.total_seconds()), httponly=True, samesite="lax", secure=https)
+    out.set_cookie(COOKIE, token, max_age=int(left.total_seconds()), httponly=True, samesite="lax",
+                   secure=_https(request))
     return out
+
+
+def _https(request: Request) -> bool:
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+
+
+def _admin(request: Request) -> None:
+    if not ADMIN_PASSWORD:
+        raise HTTPException(404, "Not found.")
+    until = ADMIN_SESSIONS.get(request.cookies.get(ADMIN_COOKIE, ""), 0)
+    if until < time.time():
+        raise HTTPException(401, "Sign in to manage links.")
+
+
+@app.get("/api/admin/session")
+def admin_session(request: Request) -> dict:
+    try:
+        _admin(request)
+    except HTTPException as e:
+        if e.status_code == 404:
+            raise
+        return {"signed_in": False}
+    return {"signed_in": True}
+
+
+@app.post("/api/admin/login")
+def admin_login(body: dict, request: Request) -> JSONResponse:
+    if not ADMIN_PASSWORD:
+        raise HTTPException(404, "Not found.")
+    if not secrets.compare_digest(str((body or {}).get("password") or "").encode(), ADMIN_PASSWORD.encode()):
+        time.sleep(1)  # one guess a second per request
+        raise HTTPException(401, "That password is wrong.")
+    cookie = secrets.token_urlsafe(24)
+    now = time.time()
+    for k in [k for k, until in ADMIN_SESSIONS.items() if until < now]:
+        ADMIN_SESSIONS.pop(k, None)
+    ADMIN_SESSIONS[cookie] = now + ADMIN_HOURS * 3600
+    out = JSONResponse({"signed_in": True})
+    out.set_cookie(ADMIN_COOKIE, cookie, max_age=ADMIN_HOURS * 3600, httponly=True, samesite="strict",
+                   secure=_https(request), path="/api/admin")
+    return out
+
+
+@app.post("/api/admin/logout")
+def admin_logout(request: Request) -> JSONResponse:
+    ADMIN_SESSIONS.pop(request.cookies.get(ADMIN_COOKIE, ""), None)
+    out = JSONResponse({"signed_in": False})
+    out.delete_cookie(ADMIN_COOKIE, path="/api/admin")
+    return out
+
+
+def _link_row(link: dict) -> dict:
+    """A link as the admin page lists it: never its token (only a hash is stored), with what it has used."""
+    with LOCK:
+        jobs = [j for j in JOBS.values() if j.get("_owner") == link["id"]]
+        uploads = sum(1 for u in UPLOADS.values() if u.get("_owner") == link["id"])
+    charged = [j for j in jobs if j["state"] in CHARGED]
+    credits = Links.credits(link)
+    used = sum(_cost(j) for j in charged)
+    return {"id": link["id"], "name": link["name"], "created": link["created"], "expires": link["expires"],
+            "revoked": link.get("revoked"), "live": Links.live(link), "credits": credits, "used": used,
+            "left": max(0, credits - used), "videos": sum(1 for j in charged if j["state"] == "done"),
+            "previews": sum(1 for j in jobs if j.get("preview")), "uploads": uploads,
+            "last_active": max((j["created_at"] for j in jobs), default=None)}
+
+
+@app.get("/api/admin/links")
+def admin_links(request: Request) -> list:
+    _admin(request)
+    return [_link_row(link) for link in reversed(LINKS.all())]  # newest first
+
+
+@app.post("/api/admin/links")
+def admin_make_link(body: dict, request: Request) -> dict:
+    """A new link. Its address is in this answer only: it is never stored, so it can't be shown again."""
+    _admin(request)
+    body = body or {}
+    try:
+        token, link = LINKS.create(str(body.get("name") or ""), credits=int(body.get("credits") or 0),
+                                   days=int(body.get("days") or 0))
+    except (TypeError, ValueError) as e:
+        raise UserError("Give the link a name, 1 to 3600 credits and 1 to 365 days.") from e
+    return {"link": _link_row(link), "path": f"/j/{token}"}
+
+
+@app.post("/api/admin/links/{link_id}/revoke")
+def admin_revoke_link(link_id: str, request: Request) -> dict:
+    _admin(request)
+    try:
+        return _link_row(LINKS.revoke(link_id))
+    except KeyError:
+        raise HTTPException(404, "No such link.") from None
 
 
 @app.get("/api/presets")
@@ -1452,8 +1585,13 @@ def create_job(params: dict) -> dict:
     if m.get("preset_id"):
         raise UserError("Ready-made motions aren't on this server yet. Upload your own clip.")
     _upload_path(m.get("upload_id", ""), "video")
-    if m.get("length") not in SEGMENTS or float(m.get("start", 0)) < 0:
-        raise UserError("Pick a length of 5, 10, 15 or 20 seconds.")
+    length, start = m.get("length"), m.get("start", 0)
+    if (not isinstance(length, (int, float)) or isinstance(length, bool) or not SHORTEST <= length <= LONGEST
+            or not isinstance(start, (int, float)) or start < 0):
+        raise UserError(f"Pick a length of {SHORTEST} to {LONGEST} seconds.")
+    usable = (UPLOADS[m["upload_id"]].get("info") or {}).get("seconds", LONGEST) - float(start)
+    if usable < SHORTEST:
+        raise UserError("The start point is too close to the end of the clip. Pick an earlier start.")
     if params.get("subject") is None and params.get("mode") == "recast" and m.get("picks"):
         params["subject"] = "person"  # chosen in the frame: the clip reader says person or animal (run_preview)
     if params.get("subject") not in ("person", "animal"):
@@ -1491,7 +1629,8 @@ def create_job(params: dict) -> dict:
     jid = _new_id("job")
     _job_dir(jid).mkdir(parents=True)
     j = {"id": jid, "created_at": datetime.now(timezone.utc).isoformat(), "state": "draft",
-         "title": _title(params), "params": params, "cost_renders": SEGMENTS[m["length"]],
+         "title": _title(params), "params": params,
+         "cost_seconds": max(1, round(_covered(params, _plan(params, usable)) / FPS)),
          "_owner": _OWNER.get() or LOCAL}
     with LOCK:
         JOBS[jid] = j
@@ -1527,8 +1666,10 @@ def approve(jid: str) -> dict:
         rerun = j["state"] == "failed" and (j.get("error") or {}).get("refunded") and (j.get("_work") or {}).get("reference")
         if j["state"] != "awaiting_approval" and not rerun:
             raise HTTPException(409, "Approve the preview first.")
-        if _renders_left() < j["cost_renders"]:
-            raise HTTPException(402, "No renders left on this server.")
+        left = _credits_left()
+        if left < _cost(j):
+            raise HTTPException(402, f"This video needs {_cost(j)} credits and {left} are left. "
+                                     "Pick a shorter length.")
         _update(j, state="queued", error=None, progress={"stage": "waiting_for_gpu", "queue_position": QUEUES["heavy"].qsize() + 1,
                                              "eta_seconds": j["_work"]["segments"] * 520})
     _enqueue("render", jid, None)

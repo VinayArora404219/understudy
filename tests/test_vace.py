@@ -55,3 +55,12 @@ def test_the_apps_default_seed_is_accepted():
 def test_prompt_is_the_scene_then_the_look():
     text = vace.prompt("A young man in a white t-shirt on a city street.", "anime")
     assert text.startswith("A young man in a white t-shirt on a city street, everything drawn as hand-drawn anime")
+
+
+def test_a_short_last_chunk_gets_its_own_mask():
+    g = vace.build(vace.VaceParams(drive="d.mp4", reference="r.png", prompt="x", layout="portrait", chunks=2,
+                                   frames=120))
+    assert vace.lengths_for(120) == [81, 45]
+    assert g["c1_vace"]["inputs"]["length"] == 45 and g["c1_depth"]["inputs"]["length"] == 45 - vace.OVERLAP
+    assert g["make_45"]["inputs"]["batch_size"] == 45 - vace.OVERLAP and "make" not in g
+    assert g["c1_vace"]["inputs"]["control_masks"] == ["mask_45", 0]

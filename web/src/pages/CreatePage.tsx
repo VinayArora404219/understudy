@@ -8,9 +8,7 @@ import { PeoplePicker, PersonThumb } from "../components/PeoplePicker";
 import { aspectOf, Button, Card, CheckList, cx, Pill, SectionTitle, Spinner } from "../components/ui";
 
 type Step = "motion" | "change" | "preview";
-type Length = JobParams["motion"]["length"];
-const LENGTHS: Length[] = [5, 10, 15, 20];
-
+const SHORTEST = 2, LONGEST = 20; // seconds; the server holds the same bounds
 /** Three separate jobs, as a visitor thinks of them. Each step 2 asks only its own question. */
 const MODES: [Mode, string, string][] = [
   ["recast", "Recast", "Someone else performs your moves: a person, a mascot, an animal."],
@@ -23,7 +21,7 @@ const MAX_PICKS = 2;
 /** Everyone found in the clip's start frame (`people`), and who Recast replaces (`picks`, Person ids).
  *  Words can't pick one person out of a crowd, so the visitor taps them (recast/people.py). */
 interface Motion {
-  upload?: Upload; preset?: MotionPreset; start: number; length: Length;
+  upload?: Upload; preset?: MotionPreset; start: number; length: number;
   people?: { key: string; frame_url: string; list: Person[] }; picks: number[];
 }
 const chosenOf = (m: Motion): Person[] =>
@@ -44,7 +42,7 @@ interface Change {
   characters: (CharSlot | undefined)[]; // [only] or [left, right]
   style?: string;
   place: { mode: PlaceMode; text: string; upload?: Upload };
-  outfit?: { upload?: Upload; text: string }; // Restage needs the picture; Recast can say it in words alone
+  outfit?: { upload: Upload; text: string };
   finish: JobParams["finish"];
   audio: JobParams["audio"];
 }
@@ -84,7 +82,7 @@ export function CreatePage() {
         )}
         {step === "preview" && job && <PreviewStep job={job} onBack={() => setStep("change")} />}
       </div>
-      <Summary mode={mode} motion={motion} change={change} rendersLeft={session?.renders_left} />
+      <Summary mode={mode} motion={motion} change={change} creditsLeft={session?.credits_left} />
     </div>
   );
 }
@@ -97,7 +95,8 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
   const [tab, setTab] = useState<"mine" | "ours">(motion.preset ? "ours" : "mine");
   const presets = useQuery({ queryKey: ["presets"], queryFn: () => api.presets() });
   const up = useMutation({ mutationFn: (f: File) => api.upload(f, "video"),
-    onSuccess: (u) => setMotion({ ...motion, upload: u, preset: undefined, start: 0, people: undefined, picks: [] }) });
+    onSuccess: (u) => setMotion({ ...motion, upload: u, preset: undefined, start: 0, people: undefined, picks: [],
+      length: Math.max(SHORTEST, Math.min(5, Math.floor(u.info.seconds ?? 5))) }) });
   const blocked = motion.upload?.checks.some((c) => c.level === "block");
   const clipSeconds = motion.upload?.info.seconds ?? motion.preset?.seconds ?? 0;
   const ready = (motion.upload && !blocked) || motion.preset;
@@ -170,19 +169,9 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
         <WhoToReplace upload={motion.upload} start={motion.start} show={mode === "recast"} motion={motion} setMotion={setMotion} />
       )}
 
-      {ready && clipSeconds > 5 && (
-        <div className="mt-6">
-          <div className="mb-2 text-sm text-ink-300">How much of the clip to use</div>
-          <div className="flex flex-wrap gap-2">
-            {LENGTHS.filter((l) => l <= Math.max(5, Math.floor(clipSeconds))).map((l) => (
-              <button key={l} onClick={() => setMotion({ ...motion, length: l })}
-                className={cx("h-10 rounded-full border px-4 text-sm",
-                  motion.length === l ? "border-accent bg-accent/10 text-accent" : "border-ink-700 text-ink-300 hover:border-ink-500")}>
-                {l} s{l > 5 && <span className="ml-1 text-ink-500">· {l / 5} renders</span>}
-              </button>
-            ))}
-          </div>
-        </div>
+      {ready && clipSeconds > SHORTEST && (
+        <LengthPick value={motion.length} longest={Math.min(LONGEST, Math.floor(clipSeconds))}
+          onChange={(l) => setMotion({ ...motion, length: l })} />
       )}
 
       <div className="mt-8 flex justify-end">
@@ -297,19 +286,17 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
   const place = !wantPlace ? { ...change.place, mode: "keep" as PlaceMode }
     : placeModes.some(([m]) => m === change.place.mode) ? change.place : { ...change.place, mode: fallback };
   const style = mode === "swap" ? undefined : change.style;
-  const outfit = mode === "swap" && swap === "outfit" ? change.outfit
-    : mode === "recast" && (change.outfit?.text.trim() || change.outfit?.upload) ? change.outfit : undefined;
+  const outfit = mode === "swap" && swap === "outfit" ? change.outfit : undefined;
   const outfitOk = !outfit || outfit.text.trim().length > 2;
   const characters = mode === "recast" ? filled : [];
 
   const placeOk = (place.mode !== "describe" || place.text.trim().length > 2) && (place.mode !== "image" || !!place.upload);
   const ready = mode === "recast"
-    ? filled.length === (two ? 2 : 1) && filled.every((c) => c.text.trim().length > 2) && placeOk && outfitOk
+    ? filled.length === (two ? 2 : 1) && filled.every((c) => c.text.trim().length > 2) && placeOk
     : mode === "restyle" ? !!style
     : swap === "outfit" ? !!outfit?.upload && outfitOk
     : place.mode !== "keep" && placeOk;
-  const missing = mode === "recast" ? (filled.length === (two ? 2 : 1) && !outfitOk ? "Say what the outfit is."
-      : two ? "Add a character for each performer." : "Add a character image.")
+  const missing = mode === "recast" ? (two ? "Add a character for each performer." : "Add a character image.")
     : mode === "restyle" ? "Pick a look." : swap === "place" ? "Say where to go." : `Add the ${swap} and say what it is.`;
 
   const setSlot = (i: number, c: CharSlot | undefined) => {
@@ -330,7 +317,7 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
         characters: refs,
         style,
         place: { mode: place.mode, text: place.text || undefined, upload_id: place.upload?.id },
-        outfit: outfit && { upload_id: outfit.upload?.id, text: outfit.text },
+        outfit: outfit && { upload_id: outfit.upload.id, text: outfit.text },
         finish: change.finish,
         audio: change.audio,
       };
@@ -362,7 +349,7 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
     <section className="space-y-6">
       {mode === "recast" && <>
         <SectionTitle step="Step 2" title={two ? "Who performs instead?" : "Who performs instead?"}
-          hint="Your moves, someone else's look. Add an outfit, a look or a new place too if you like." />
+          hint="Your moves, someone else's look. Add a look or a new place too if you like." />
         <Card className="space-y-6 p-5">
           {(chosen.length ? chosen : two ? [undefined, undefined] : [undefined]).map((person, i) => (
             <div key={person?.id ?? i} className={cx(i > 0 && "border-t border-ink-700/70 pt-6")}>
@@ -384,19 +371,6 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
             </div>
           )}
         </Card>
-        <Option title="Outfit" line={`Optional: dress ${two ? "both characters" : "your character"} in something else.`} on={!!outfit}>
-          <ImagePick label="Outfit image" image={change.outfit?.upload} hint="Optional: a photo of the clothes. Words alone work too."
-            onPick={(u) => setChange({ ...change, outfit: { upload: u, text: change.outfit?.text ?? "" } })}
-            onClear={() => setChange({ ...change, outfit: change.outfit && { text: change.outfit.text } })} />
-          {change.outfit?.upload ? (
-            <ItemText role="outfit" upload={change.outfit.upload} value={change.outfit.text}
-              onChange={(t) => setChange({ ...change, outfit: { ...change.outfit, text: t } })} />
-          ) : (
-            <TextField label="What they wear" placeholder="e.g. a yellow raincoat and rubber boots" value={change.outfit?.text ?? ""}
-              onChange={(t) => setChange({ ...change, outfit: { ...change.outfit, text: t } })}
-              help={`${two ? "Both characters wear it. Their" : "Their"} faces and hair stay; we dress their photo first, and the preview shows it.`} />
-          )}
-        </Option>
         <Option title="Look" line="Optional: draw your character in a style." on={!!change.style}>
           <StyleGrid value={change.style} onChange={(k) => setChange({ ...change, style: k })} />
         </Option>
@@ -423,7 +397,7 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
             <ImagePick label="Outfit image" image={change.outfit?.upload} hint="A product photo of the garment works best."
               onPick={(u) => setChange({ ...change, outfit: { upload: u, text: change.outfit?.text ?? "" } })}
               onClear={() => setChange({ ...change, outfit: undefined })} />
-            {change.outfit?.upload && <ItemText role="outfit" upload={change.outfit.upload} value={change.outfit.text}
+            {change.outfit && <ItemText role="outfit" upload={change.outfit.upload} value={change.outfit.text}
               onChange={(t) => setChange({ ...change, outfit: { ...change.outfit!, text: t } })} />}
           </>}
           {swap === "place" && placeEditor}
@@ -493,16 +467,16 @@ export function PreviewStep({ job: first, onBack, backLabel = "Change choices" }
   const cast = job.preview?.kind === "cast";
   // Recast in the clip's place previews the video's real first 5 seconds (minutes of GPU); a 5 s video is all of it
   const firstSecond = job.params.mode === "recast" && job.params.place.mode === "keep";
-  const whole = firstSecond && job.params.motion.length === 5;
+  const whole = firstSecond && job.cost_seconds <= 5; // one chunk: the preview is the whole video
   const [editing, setEditing] = useState(false); // an unsaved scene edit must not be skipped by a render
   return (
     <section>
       <SectionTitle step="Step 3" title="Does this look right?"
         hint={firstSecond
           ? whole
-            ? "This is your video, rendered for real; its sound is added when you keep it. Your clip stays as filmed: its room, light, objects and everyone you didn't choose. Previews are free; keeping it uses a render."
-            : "These are the first 5 seconds of your video, rendered for real. Your clip stays as filmed: its room, light, objects and everyone you didn't choose, and the rest follows your clip's moves the same way. Check them before a render is spent. Previews are free."
-          : "This picture sets the look: who appears, what they wear, the style and the place. Moves, poses and framing come from your clip, so the video won't start exactly like this picture. Check the look before a render is spent. Previews are free."} />
+            ? "This is your video, rendered for real; its sound is added when you keep it. Your clip stays as filmed: its room, light, objects and everyone you didn't choose. Previews are free; keeping it uses its credits."
+            : "These are the first 5 seconds of your video, rendered for real. Your clip stays as filmed: its room, light, objects and everyone you didn't choose, and the rest follows your clip's moves the same way. Check them before credits are spent. Previews are free."
+          : "This picture sets the look: who appears, what they wear, the style and the place. Moves, poses and framing come from your clip, so the video won't start exactly like this picture. Check the look before credits are spent. Previews are free."} />
       <div className="grid grid-cols-2 gap-4">
         <Frame label={job.params.motion.picks?.length ? "Who you chose, in your first frame" : "What you filmed (first frame)"} src={job.preview?.frame_url} loading={matching && !job.preview} aspect={job.aspect} />
         {firstSecond
@@ -527,7 +501,7 @@ export function PreviewStep({ job: first, onBack, backLabel = "Change choices" }
           <Button disabled={matching || again.isPending} onClick={() => again.mutate()}>Try another version</Button>
           <Button variant="primary" size="lg" disabled={job.state !== "awaiting_approval" || approve.isPending || editing}
             title={editing ? "Save or cancel your edit first" : undefined} onClick={() => approve.mutate()}>
-            {whole && job.preview?.first_url ? "Keep this video" : "Render video"} · {job.cost_renders} render{job.cost_renders > 1 ? "s" : ""}
+            {whole && job.preview?.first_url ? "Keep this video" : "Render video"} · {job.cost_seconds} credit{job.cost_seconds === 1 ? "" : "s"}
           </Button>
         </div>
       </div>
@@ -642,7 +616,7 @@ function CastWhileRendering({ job, whole }: { job: Job; whole: boolean }) {
 
 /* ---------------------------------------------------------------- pieces */
 
-function Summary({ mode, motion, change, rendersLeft }: { mode: Mode; motion: Motion; change: Change; rendersLeft?: number }) {
+function Summary({ mode, motion, change, creditsLeft }: { mode: Mode; motion: Motion; change: Change; creditsLeft?: number }) {
   const styles = useQuery({ queryKey: ["styles"], queryFn: () => api.styles() });
   const rows = useMemo(() => {
     const r: [string, string][] = [];
@@ -660,7 +634,6 @@ function Summary({ mode, motion, change, rendersLeft }: { mode: Mode; motion: Mo
     if (mode === "recast") {
       change.characters.slice(0, two ? 2 : 1).forEach((c, i) => c && r.push([
         chosen[i] && two ? `For person ${chosen[i].id}` : two ? (i ? "Right" : "Left") : "Character", c.text || "Your image"]));
-      if (change.outfit?.text.trim()) r.push(["Outfit", change.outfit.text]);
       if (change.style) r.push(["Look", styles.data?.find((s) => s.key === change.style)?.name ?? change.style]);
       r.push(["Place", placeLabel]);
     } else if (mode === "restyle") {
@@ -671,7 +644,8 @@ function Summary({ mode, motion, change, rendersLeft }: { mode: Mode; motion: Mo
     r.push(["Quality", change.finish === "480p" ? "480p native" : `${change.finish} (upscaled)`]);
     return r;
   }, [mode, motion, change, styles.data]);
-  const cost = motion.length / 5;
+  const clip = motion.upload?.info.seconds ?? motion.preset?.seconds;
+  const cost = clip ? Math.min(motion.length, Math.floor(clip)) : motion.length; // the server charges what it delivers
   return (
     <aside className="lg:sticky lg:top-24 lg:self-start">
       <Card className="p-5">
@@ -686,10 +660,11 @@ function Summary({ mode, motion, change, rendersLeft }: { mode: Mode; motion: Mo
         </dl>
         <div className="mt-5 border-t border-ink-700 pt-4 text-sm">
           <div className="flex justify-between"><span className="text-ink-500">Cost</span>
-            <span>{cost} render{cost > 1 ? "s" : ""}</span></div>
-          {rendersLeft !== undefined && <div className="mt-1 flex justify-between"><span className="text-ink-500">Left after</span>
-            <span className={rendersLeft - cost < 0 ? "text-bad" : ""}>{Math.max(0, rendersLeft - cost)}</span></div>}
-          <p className="mt-3 text-xs text-ink-500">Previews are free. A failed render is refunded automatically.</p>
+            <span>{cost} credit{cost === 1 ? "" : "s"}</span></div>
+          {creditsLeft !== undefined && <div className="mt-1 flex justify-between"><span className="text-ink-500">Left after</span>
+            <span className={creditsLeft - cost < 0 ? "text-bad" : ""}>{Math.max(0, creditsLeft - cost)}</span></div>}
+          <p className="mt-3 text-xs text-ink-500">1 credit = 1 second of finished video. Previews are free, and a failed
+            render is refunded automatically.</p>
         </div>
       </Card>
     </aside>
@@ -821,6 +796,23 @@ function TextField({ label, value, onChange, placeholder, help, busy }: {
       )}
       {help && <span className="mt-1.5 block text-xs text-ink-500">{help}</span>}
     </label>
+  );
+}
+
+/** Seconds of the clip to use, one credit each. Only what is asked is rendered: the last chunk is as short as it
+ *  needs to be. */
+function LengthPick({ value, longest, onChange }: { value: number; longest: number; onChange: (s: number) => void }) {
+  const v = Math.min(value, longest);
+  return (
+    <div className="mt-6">
+      <div className="mb-2 flex items-baseline justify-between text-sm">
+        <span className="text-ink-300">How much of the clip to use</span>
+        <span className="tabular-nums text-ink-100">{v} s <span className="text-ink-500">· {v} credit{v === 1 ? "" : "s"}</span></span>
+      </div>
+      <input type="range" min={SHORTEST} max={longest} step={1} value={v} onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full accent-[var(--color-accent)]" aria-label="Seconds of the clip to use" />
+      <div className="mt-1 flex justify-between text-xs text-ink-500"><span>{SHORTEST} s</span><span>{longest} s</span></div>
+    </div>
   );
 }
 

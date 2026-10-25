@@ -139,3 +139,22 @@ def test_placed_sheet_puts_each_character_where_their_performer_stands(tmp_path)
     assert out.getpixel((120, 60)) == (0, 0, 255)  # the second on the right one
     assert out.getpixel((5, 5)) == (128, 128, 128)  # the room's colour around them
 
+
+
+def test_any_length_renders_whole_chunks_then_a_short_last_one():
+    from recast import graph
+    assert scail.lengths_for(scail.frames_for(2)) == [81, 81]  # whole chunks: the graphs from before
+    assert scail.lengths_for(32) == [29]  # 2 s: one short chunk, 1 + 4n frames
+    assert scail.lengths_for(112) == [81, 33]  # 7 s: the second chunk only as long as needed
+    assert scail.lengths_for(83) == [81]  # a last chunk that would add nothing past its overlap is left out
+    for frames in range(32, scail.frames_for(scail.MAX_CHUNKS) + 1):
+        lengths = scail.lengths_for(frames)
+        assert all((n - 1) % 4 == 0 for n in lengths)
+        assert 0 <= frames - graph.covered(lengths, chunk=scail.CHUNK, overlap=scail.OVERLAP) <= 7
+    p = scail.ScailParams(drive="d.mp4", reference="r.png", prompt="a man", track="person", people=1, replace=True,
+                          layout="portrait", chunks=2, frames=112, picks=["p0.png"])
+    g = scail.build(p)
+    assert g["c1_scail"]["inputs"]["length"] == 33 and g["c1_frames"]["inputs"]["length"] == 33
+    assert g["c1_masks"]["inputs"]["length"] == 33 and g["clip_frames"]["inputs"]["length"] == 76 + 33
+    with pytest.raises(scail.ScailError):
+        scail.build(scail.ScailParams(**{**p.__dict__, "chunks": 3}))

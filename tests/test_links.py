@@ -1,4 +1,4 @@
-"""Judge links: each link sees only its own work and has its own render cap."""
+"""Judge links: each link sees only its own work and has its own credits (seconds of video)."""
 import importlib
 import json
 
@@ -17,8 +17,8 @@ def app(tmp_path, monkeypatch):
     importlib.reload(mod)
 
 
-def _client(app, name, cap=3):
-    token, link = app.LINKS.create(name, cap=cap, days=10)
+def _client(app, name, credits=30):
+    token, link = app.LINKS.create(name, credits=credits, days=10)
     c = TestClient(app.app)
     assert c.post("/api/links/claim", json={"token": token}).status_code == 200
     return c, link
@@ -28,7 +28,7 @@ def _job(app, owner, jid, state="done", cost=1):
     (app.DATA / "jobs" / jid).mkdir(parents=True)
     (app.DATA / "jobs" / jid / "recast.mp4").write_bytes(b"x")
     app.JOBS[jid] = {"id": jid, "created_at": "2026-10-24T00:00:00", "state": state, "title": "t",
-                     "params": {"mode": "recast"}, "cost_renders": cost, "_owner": owner}
+                     "params": {"mode": "recast"}, "cost_seconds": cost, "_owner": owner}
 
 
 def test_without_a_link_only_the_landing_page_answers(app):
@@ -52,17 +52,28 @@ def test_each_link_sees_only_its_own_work(app):
     assert "_owner" not in a.get("/api/jobs/job_a").json()
 
 
-def test_each_link_has_its_own_cap_and_a_refund_goes_back(app):
-    a, la = _client(app, "Judge A", cap=3)
-    b, _ = _client(app, "Judge B", cap=3)
-    _job(app, la["id"], "job_1", cost=2)
-    _job(app, la["id"], "job_2", state="failed", cost=1)  # refunded: costs nothing
-    assert a.get("/api/session").json() == {"kind": "judge", "name": "Judge A", "renders_left": 1, "renders_total": 3}
-    assert b.get("/api/session").json()["renders_left"] == 3
+def test_each_link_has_its_own_credits_and_a_refund_goes_back(app):
+    a, la = _client(app, "Judge A", credits=30)
+    b, _ = _client(app, "Judge B", credits=30)
+    _job(app, la["id"], "job_1", cost=7)
+    _job(app, la["id"], "job_2", state="failed", cost=5)  # refunded: costs nothing
+    assert a.get("/api/session").json() == {"kind": "judge", "name": "Judge A", "credits_left": 23, "credits_total": 30}
+    assert b.get("/api/session").json()["credits_left"] == 30
+
+
+def test_links_and_jobs_from_before_credits_count_in_renders_of_five_seconds(app):
+    a, la = _client(app, "Judge A")
+    data = json.loads(app.LINKS.path.read_text())
+    data["links"][0] = {k: v for k, v in data["links"][0].items() if k != "credits"} | {"cap": 4}
+    app.LINKS.path.write_text(json.dumps(data))
+    app.LINKS._seen = None
+    app.JOBS["job_old"] = {"id": "job_old", "state": "done", "params": {"mode": "recast"}, "cost_renders": 1,
+                           "_owner": la["id"]}
+    assert a.get("/api/session").json()["credits_left"] == 15 and app._cost(app.JOBS["job_old"]) == 5
 
 
 def test_an_expired_link_stops_working(app):
-    token, link = app.LINKS.create("Judge C", cap=1, days=1)
+    token, link = app.LINKS.create("Judge C", credits=5, days=1)
     data = json.loads(app.LINKS.path.read_text())
     data["links"][0]["expires"] = "2020-01-01T00:00:00+00:00"
     app.LINKS.path.write_text(json.dumps(data))
@@ -85,3 +96,30 @@ def test_a_job_cant_use_someone_elses_upload(app):
                "length": 5}, "performers": 1, "subject": "person", "place": {"mode": "keep"}, "finish": "480p",
                "audio": "original"})
     assert r.status_code == 400 and "missing" in r.json()["message"]
+
+
+def test_the_admin_page_makes_lists_and_revokes_links(app, monkeypatch):
+    admin = TestClient(app.app)
+    assert admin.get("/api/admin/links").status_code == 404  # no password set: there is no admin page
+    monkeypatch.setattr(app, "ADMIN_PASSWORD", "open sesame")
+    assert admin.get("/api/admin/session").json() == {"signed_in": False}
+    assert admin.get("/api/admin/links").status_code == 401
+    assert admin.post("/api/admin/login", json={"password": "guess"}).status_code == 401
+    assert admin.post("/api/admin/login", json={"password": "open sesame"}).status_code == 200
+    assert admin.post("/api/admin/links", json={"name": "Judge D", "credits": 0, "days": 5}).status_code == 400
+
+    made = admin.post("/api/admin/links", json={"name": "Judge D", "credits": 60, "days": 5}).json()
+    token = made["path"].removeprefix("/j/")
+    judge = TestClient(app.app)
+    assert judge.post("/api/links/claim", json={"token": token}).status_code == 200
+    _job(app, made["link"]["id"], "job_d", cost=7)
+    row = admin.get("/api/admin/links").json()[0]
+    assert (row["name"], row["used"], row["left"], row["videos"], row["live"]) == ("Judge D", 7, 53, 1, True)
+    assert token not in json.dumps(admin.get("/api/admin/links").json())  # the address is shown once, at making
+    assert judge.get("/api/admin/links").status_code == 401  # a judge's cookie is not the admin's
+
+    assert admin.post(f"/api/admin/links/{row['id']}/revoke").json()["live"] is False
+    assert judge.get("/api/session").json()["kind"] == "guest"  # at once, in the browser that opened it
+    assert judge.post("/api/links/claim", json={"token": token}).status_code == 404
+    admin.post("/api/admin/logout")
+    assert admin.get("/api/admin/links").status_code == 401

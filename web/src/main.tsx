@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
+import { AdminPage } from "./pages/AdminPage";
 import "./index.css";
 import { CreatePage } from "./pages/CreatePage";
 import { JobPage } from "./pages/JobPage";
@@ -18,6 +19,7 @@ const queryClient = new QueryClient({
 const router = createBrowserRouter([
   { path: "/j/:token", element: <JudgeEntryPage /> },
   { path: "/welcome", element: <JudgeEntryPage /> },
+  { path: "/admin", element: <AdminPage /> },
   {
     element: <AppShell />,
     children: [

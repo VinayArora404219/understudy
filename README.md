@@ -14,7 +14,7 @@ Open weights only, end to end, run through the official
 
 | Mode | What changes | How |
 |---|---|---|
-| **Recast** | Someone else performs your moves: a person, a mascot, an animal. One or two performers, in the clip's own place or in another one, in their own clothes or a new outfit. | SCAIL-2 (Wan2.1 14B), tracked by SAM 3.1. Another place, or a new outfit, starts from a picture made with Qwen-Image-Edit-2511. |
+| **Recast** | Someone else performs your moves: a person, a mascot, an animal. One or two performers, in the clip's own place or in another one. | SCAIL-2 (Wan2.1 14B), tracked by SAM 3.1. Another place starts from a picture made with Qwen-Image-Edit-2511. |
 | **Restyle** | The whole video, redrawn in a look: anime, toy, pixel art, comic ink and more. | Wan2.1 VACE 14B, video to video on a depth map of every frame, so things that happen later in the clip still happen. |
 | **Restage** | You stay you. Change one thing: your outfit, or the place. | SCAIL-2 recasts you as yourself, so the clip still drives every frame. |
 
@@ -44,6 +44,10 @@ Open weights only, end to end, run through the official
 - **Reproducible.** `recipe.json` records the input hashes, every setting, the seed, the models, the exact
   ComfyUI API graph it ran (it opens in ComfyUI), and each step done after it.
 
+- **Any length, paid by the second.** Ask for 2 to 20 seconds of your clip. The video renders in 5 s chunks,
+  each anchored on the last frames of the one before, and the last chunk is only as long as it needs to be. A
+  render costs one credit per second it delivers; previews are free, and a failed render is refunded.
+
 Every problem met while building this, and how each was fixed, is in
 [docs/PROBLEMS_AND_FIXES.md](docs/PROBLEMS_AND_FIXES.md). The measurements behind each claim are in
 [bench/RESULTS.md](bench/RESULTS.md).
@@ -60,6 +64,13 @@ image-edit previews) and **heavy** (renders, and the clip's-place preview, which
 one task at a time, so a picker never waits behind a render. The only machine settings are the endpoints:
 `COMFY_BASE_URL` (plus `COMFY_API_KEY`) and, optionally, `COMFY_QUICK_BASE_URL` for a second GPU. The
 judge build runs both lanes on Modal ([deploy/modal/](deploy/modal/)).
+
+## Judge links and the admin page
+
+With `RECAST_LINKS=1` the server answers only browsers that opened a link: everything made through a link is
+seen only through it, and each link has its own credits. Make, list and revoke links with
+`tools/make_link.py`, or at `/admin` when `RECAST_ADMIN_PASSWORD` is set, where each link's use is shown too.
+Only a hash of each link is stored, so a link is shown once, when it is made.
 
 ## Run it yourself
 
@@ -90,6 +101,8 @@ and its preview takes about as long, since it is that render.
   text. Small accessories from a reference photo (glasses) appear in some renders and not others.
 - In the clip's place the room keeps the render's colour, so a white studio comes back slightly grey.
 - Jobs on the same lane queue: two visitors rendering at once wait for each other.
+- Four chunks at most: a 20 s ask delivers about 19.3 s in Recast and Restage and 18.6 s in Restyle, and is
+  charged for what it delivers.
 
 ## Licence
 

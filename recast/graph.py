@@ -52,6 +52,29 @@ def frames_for(segments: int) -> int:
     return SEGMENT_FRAMES + SEGMENT_STRIDE * (segments - 1)
 
 
+def chunk_lengths(frames: int, *, chunk: int, overlap: int) -> list[int]:
+    """Frames in each chunk of a `frames`-frame video: whole chunks, then a shorter last one, so a clip of any
+    length renders only what it needs. Each later chunk starts `overlap` frames back (it anchors on them).
+    Every length is 1 + 4n, which Wan's latent needs, so up to 3 frames at the end are dropped; a last chunk
+    that would add nothing past its overlap is left out."""
+    out: list[int] = []
+    start = 0
+    while True:
+        length = min(chunk, (frames - start - 1) // 4 * 4 + 1)
+        if out and length <= overlap:
+            break
+        out.append(length)
+        if length < chunk or start + length >= frames:
+            break
+        start += chunk - overlap
+    return out
+
+
+def covered(lengths: list[int], *, chunk: int, overlap: int) -> int:
+    """Frames a render of these chunk lengths delivers."""
+    return (chunk - overlap) * (len(lengths) - 1) + lengths[-1]
+
+
 def segments_for(frames: int) -> int:
     """Fewest segments that cover `frames` source frames."""
     if frames <= SEGMENT_FRAMES:
