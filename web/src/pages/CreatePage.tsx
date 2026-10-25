@@ -728,7 +728,7 @@ function CharacterPick({ who, slot, onChange }: { who: React.ReactNode; slot?: C
     <div className="space-y-3">
       {who && <div className="text-sm font-medium text-ink-100">{who}</div>}
       <ImagePick label="Character image" image={slot?.upload}
-        hint="A clear photo or drawing. We use the face and look; the pose comes from your clip."
+        hint="A clear photo or drawing, in the clothes they should wear. The pose comes from your clip."
         onPick={(u) => onChange({ upload: u, text: slot?.text ?? "" })}
         onClear={() => onChange(undefined)} />
       {slot && (
@@ -736,8 +736,8 @@ function CharacterPick({ who, slot, onChange }: { who: React.ReactNode; slot?: C
           value={slot.text} onChange={(t) => onChange({ ...slot, text: t })}
           busy={writing ? "Looking at the picture: face, hair and clothes…" : undefined}
           help={writing ? "You can edit the words once they're written. This takes about half a minute."
-            : failed ? "We couldn't read the picture. The video draws them from the photo and these words: describe their face, hair and clothes."
-            : "Written from the picture. The video draws them from the photo and these words, so fix anything wrong. Their moves come from your clip: leave out names and actions."} />
+            : failed ? "We couldn't read the picture. The video draws them from the photo and these words: describe their face, hair and clothes. Their clothes come from the photo."
+            : "Written from the picture. The video draws them from the photo and these words, so fix anything wrong. Their clothes come from the photo: to change them, use a photo in those clothes. Their moves come from your clip: leave out names and actions."} />
       )}
     </div>
   );
