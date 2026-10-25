@@ -52,6 +52,7 @@ function StatePill({ job }: { job: Job }) {
 
 const STAGES: [JobProgress["stage"], string][] = [
   ["dressing", "Putting on the new clothes"],
+  ["completing", "Drawing the rest of a character's body"],
   ["waiting_for_gpu", "Waiting for a GPU"],
   ["starting_gpu", "Starting the GPU"],
   ["loading_models", "Loading the models"],
@@ -68,7 +69,7 @@ function InProgress({ job }: { job: Job }) {
   const p = job.progress;
   // the clothes step only for jobs that have one
   const dressing = !!(job.params.outfits?.some(Boolean) || (job.params.mode === "recast" && job.params.outfit));
-  const stages = STAGES.filter(([s]) => s !== "dressing" || dressing);
+  const stages = STAGES.filter(([s]) => (s !== "dressing" || dressing) && (s !== "completing" || p?.stage === "completing"));
   const current = p ? Math.max(0, stages.findIndex(([s]) => s === p.stage)) : 0;
   // A sheet of cut-outs ("cast") is what the model works from, not how the video starts: show who was chosen
   const sheet = job.preview?.kind === "cast";

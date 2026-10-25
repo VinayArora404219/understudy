@@ -389,6 +389,24 @@ Each preview is the real first 5 s (in the clip's own place) or the start pictur
 | Restage, one person, outfit and new place together ("a red leather biker jacket", "a rooftop terrace at sunset over a city") | one edit gives both: the jacket over her own top on the rooftop, with her pose, sunglasses and necklace kept |
 | The lower-clothes reader, on a clip that shows only the upper body | it answered "The image shows only the upper body of the person. Nothing below", which went into the prompt as clothes; such replies are now dropped |
 
+## A bust photo for a performer who shows more body (2026-10-25)
+
+Two private clips, the same character photo: a man's head and shoulders, 1.6 face heights of body from the
+top of his face to the photo's bottom edge. Each character's cut-out is placed where its performer stands.
+
+| Render | Result |
+|---|---|
+| Duo, two animals standing on their hind legs, 8 s, his bust for the one with its arms out | for frames 0 to 3 the bust is pasted over the room as it is on the reference, much larger than the performer; then the clip's own animal is drawn again for the rest of the video. The other character (a full-length photo) was recast fine |
+| The same, with his photo first completed to a full body by Qwen-Image-Edit (same seed) | both recast for the whole 8 s; frame 0 is an ordinary frame. His face is smaller in the picture, so less detailed |
+| A crowd clip, him for a man seen to the waist, 5 s | his face is recast, but he keeps the performer's grey suit: the photo shows almost none of his own black t-shirt |
+| The same, with the completed photo | he wears his black t-shirt |
+
+So a character photo is now completed to a full body before the reference sheet when it is a bust (under
+2.5 face heights of body, cut off by the photo's bottom edge) and the performer shows clearly more body
+(1.5 face heights more; without a face found, seen to the feet or a much taller outline). Over every past
+render with the reference sheet, this picks exactly the four that used the bust: a chest-up photo (3 face
+heights) and waist-up ones (4 to 7) rendered fine and are left as they are.
+
 ## Running on Modal (2026-10-24)
 
 The judge build renders on Modal (`deploy/modal/`): ComfyUI 0.41.3 + comfy-api-proxy 0.1.6 per container, same

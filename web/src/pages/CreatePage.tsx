@@ -624,9 +624,9 @@ function Frame({ label, src, video, poster, loading, wait = "Building your previ
 /** While the preview renders: who replaces whom, at once, and the GPU job's progress over all of its phases. */
 function CastWhileRendering({ job, whole }: { job: Job; whole: boolean }) {
   const p = job.progress;
-  const pct = !p ? 0 : p.stage === "dressing" ? 1 : p.stage === "starting_gpu" ? 2 : p.stage === "waiting_for_gpu" ? 4 : p.stage === "loading_models" ? 8
+  const pct = !p ? 0 : p.stage === "dressing" || p.stage === "completing" ? 1 : p.stage === "starting_gpu" ? 2 : p.stage === "waiting_for_gpu" ? 4 : p.stage === "loading_models" ? 8
     : p.stage === "rendering" ? Math.round(12 + (70 * (p.step ?? 0)) / (p.steps || 6)) : 88;
-  const line = !p ? "Starting…" : p.stage === "dressing" ? "Putting on the new clothes…" : p.stage === "starting_gpu" ? "Reading your clip…" : p.stage === "waiting_for_gpu" ? "Waiting for the GPU…"
+  const line = !p ? "Starting…" : p.stage === "dressing" ? "Putting on the new clothes…" : p.stage === "completing" ? "Drawing the rest of a character's body…" : p.stage === "starting_gpu" ? "Reading your clip…" : p.stage === "waiting_for_gpu" ? "Waiting for the GPU…"
     : p.stage === "loading_models" ? "Loading the models…" : p.stage === "rendering" ? `Drawing your video: step ${p.step} of ${p.steps}`
     : "Putting everyone else back as filmed…";
   const left = p?.eta_seconds ? ` · about ${Math.max(1, Math.round(p.eta_seconds / 60))} min left` : "";

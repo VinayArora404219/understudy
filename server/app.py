@@ -219,7 +219,9 @@ def _load() -> None:
     for p in (DATA / "jobs").glob("*/job.json"):
         j = json.loads(p.read_text())
         JOBS[j["id"]] = j
-        if j["state"] == "matching":  # a preview is cheap; ask again rather than resume
+        if j["state"] == "matching" and j.get("auto"):  # on its way to the video: carry on, reattaching on the GPU
+            _enqueue("preview", j["id"], (j.get("preview") or {}).get("seed", 1))
+        elif j["state"] == "matching":  # a draft is free; ask again rather than resume
             _update(j, state="failed", error={"message": "The preview was interrupted. Try again.", "refunded": False})
         elif j["state"] in ("queued", "rendering", "finishing"):
             _enqueue("render", j["id"], None)  # the stored submission reattaches to the GPU job
@@ -627,6 +629,93 @@ def _dressed(c: dict, outfit: dict) -> dict:
     return {**c, "dressed": str(home.relative_to(DATA)), "text": words, "keep_outfit": True}
 
 
+CUT_AT = 0.97  # a cut-out whose body reaches this far down its photo is cut off by the photo's bottom edge
+BUST = 2.5  # face heights of body in a photo, from the top of the face down: a bust is less (measured 1.6)
+MORE = 1.5  # face heights more body the performer shows than the photo, for the photo to be completed
+SEEN_TO = 0.9  # a performer whose outline ends above this in the frame is seen down to their feet
+TALLER = 1.5  # a performer's outline this much taller for its width than the bust's shows more body
+
+
+def _body_length(image: Path, box: tuple) -> float | None:
+    """How much body a picture shows of the person in `box` (x, y, w, h as fractions): face heights from the top
+    of their face to where they end. None when no face is found (a drawing, an animal, someone facing away)."""
+    from PIL import Image
+
+    img = Image.open(image).convert("RGB")
+    W, H = img.size
+    x, y, w, h = box
+    left, top = round(x * W), round(y * H)
+    region = img.crop((left, top, round((x + w) * W), round((y + h) * H)))
+    tmp = image.parent / f".face_{left}_{top}.png"
+    region.save(tmp)
+    try:
+        face = crop.find_face(tmp)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return None if not face else (region.height - face[1]) / face[3]
+
+
+def _needs_body(c: dict, box: tuple, frame: Path) -> bool:
+    """The character's photo is a bust while their performer shows more of their body: the cut-out would be a
+    bust over a body. Measured: SCAIL-2 pasted the bust for a few frames and then drew the clip's own performer
+    again (a performer seen whole), or kept the performer's own clothes below the face (one seen waist up); with
+    the body drawn in, both came out right (bench/RESULTS.md). A chest-up photo (3 face heights) rendered fine,
+    so only busts are completed; a photo without a face found (a drawing, an animal) is left as it is."""
+    src = _home_of(c) / "cutout_people"
+    found = people.load(src) if (src / "people.json").exists() else []
+    if not found:
+        return False
+    main = max(found, key=lambda f: f.area)
+    if main.box[1] + main.box[3] < CUT_AT:  # the photo's own edge doesn't cut them off
+        return False
+    photo = _body_length(_photo_of(c), main.box)
+    if photo is None or photo >= BUST:
+        return False
+    performer = _body_length(frame, box)
+    if performer is not None:
+        return performer >= photo + MORE
+    # an animal, or someone facing away: seen down to their feet, or a clearly taller shape than the bust's
+    from PIL import Image
+
+    pw, ph = Image.open(_photo_of(c)).size
+    fw, fh = Image.open(frame).size
+    taller = (box[3] * fh) / (box[2] * fw) >= TALLER * (main.box[3] * ph) / (main.box[2] * pw)
+    return box[1] + box[3] < SEEN_TO or taller
+
+
+def _whole_body(c: dict) -> dict:
+    """The character's photo with the rest of their body drawn in (Qwen-Image-Edit), kept with their upload.
+    The photo goes on a taller canvas of its own background colour first, so the body has room below."""
+    from PIL import Image
+
+    from recast import runner
+
+    src = _upload_path(c["upload_id"], "image")
+    home = src.parent / "whole_body"
+    done = home / "dressed.png"  # the name _photo_of reads
+    if not done.exists():
+        home.mkdir(exist_ok=True)
+        img = Image.open(src).convert("RGB")
+        colour = media.edge_colour(src)
+        canvas = Image.new("RGB", (img.width, max(img.height, round(img.width * 1.8))),
+                           ((colour >> 16) & 255, (colour >> 8) & 255, colour & 255))
+        canvas.paste(img, (0, 0))
+        canvas.save(home / "padded.png")
+        mp = reflib.MatchParams(frame="padded.png", base="frame", whole_body=True,
+                                subject=reflib.cast_word([c["text"]]), seed=1,
+                                prefix=f"recast/body_{c['upload_id']}")
+        with _comfy() as client:
+            def make():
+                mp.frame = client.assets.from_file(home / "padded.png")
+                return reflib.build(mp)
+            files = runner.download(runner.follow(runner.submit_graph(client, make, home / "edit_submission.json")),
+                                    home / "edit", node_id=reflib.FINAL_NODE)
+        if not files:
+            raise RuntimeError("completing the character's body finished without an image")
+        media.clean_image(files[0], done)
+    return {**c, "dressed": str(home.relative_to(DATA))}
+
+
 def _cut_out(c: dict, photo: Path, dst: Path, colour: int) -> Path | None:
     """The character alone from their photo (people.cut_out); the people found are kept with the photo."""
     from recast import runner
@@ -796,15 +885,27 @@ def run_preview(j: dict, seed: int) -> None:
     changes = bool(chars or item or p.get("style") or p["place"]["mode"] != "keep")
     if engine.get("replace") and chars:  # nothing to generate: who replaces whom, cut out of their photos
         colour = media.edge_colour(frame)  # the room's own colour, so a leak of the backdrop blends in
+        picks = p["motion"].get("picks") or []
+        found = people.load(DATA / work["people_dir"]) if picks and work.get("people_dir") else []
+        boxes = sorted((f.box for f in found if f.id in picks), key=lambda b: b[0] + b[2] / 2)  # left to right
+        dv = media.probe(d / work["drive"])
         photos = []
         for i, c in enumerate(chars):
             whole = media.clean_image(_photo_of(c), d / f"cast_{i}.png")
-            photos.append(_cut_out(c, whole, d / f"cast_{i}_cut.png", colour) or whole)
-        picks = p["motion"].get("picks") or []
-        found = people.load(DATA / work["people_dir"]) if picks and work.get("people_dir") else []
-        boxes = [f.box for f in found if f.id in picks]
+            cut = _cut_out(c, whole, d / f"cast_{i}_cut.png", colour)
+            if cut and len(boxes) == len(chars) and not c.get("dressed") and \
+                    _needs_body(c, boxes[i], DATA / work["people_dir"] / "frame.png"):
+                _update(j, progress={**(j.get("progress") or {}), "stage": "completing"})
+                c = chars[i] = _whole_body(c)
+                whole = media.clean_image(_photo_of(c), d / f"cast_{i}.png")
+                cut = _cut_out(c, whole, d / f"cast_{i}_cut.png", colour)
+                notes.append("A character's photo stopped at the chest while their performer is seen whole, so we "
+                             "drew the rest of their body first. A full-length photo gives you the say over it.")
+                cast = _cast_pairs(work, p, chars)
+                if cast:
+                    _update(j, preview={**(j.get("preview") or {}), "cast": cast})
+            photos.append(cut or whole)
         if len(boxes) == len(photos):  # each character where their performer stands (scail.placed_sheet)
-            dv = media.probe(d / work["drive"])
             ref = scail.placed_sheet(photos, boxes, (dv.width, dv.height), d / "reference.png", colour)
         else:
             ref = scail.reference_sheet(photos, d / "reference.png")

@@ -133,7 +133,7 @@ export interface JobPreview {
 }
 
 export interface JobProgress {
-  stage: "dressing" | "waiting_for_gpu" | "starting_gpu" | "loading_models" | "rendering" | "finishing";
+  stage: "dressing" | "completing" | "waiting_for_gpu" | "starting_gpu" | "loading_models" | "rendering" | "finishing";
   queue_position?: number;
   segment?: number;
   segments?: number;

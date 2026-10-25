@@ -267,3 +267,31 @@ def test_straight_to_the_video_holds_its_credits_from_the_start(app, monkeypatch
     r = c.post(f"/api/jobs/{big['id']}/preview", json={})
     assert r.status_code == 402 and "needs 5 credits" in r.json()["message"]
     assert c.post("/api/jobs", json=_params([1], auto="yes")).status_code == 400
+
+
+def test_only_a_bust_for_a_performer_showing_more_body_gets_its_body_drawn(app, monkeypatch, tmp_path):
+    import json as _json
+
+    from PIL import Image
+
+    home = app._upload_path("up_face", "image").parent
+    Image.new("RGB", (400, 400)).save(home / "image.png")
+    (home / "cutout_people").mkdir()
+    (home / "cutout_people" / "people.json").write_text(_json.dumps(
+        [{"id": 1, "box": [0.0, 0.1, 1.0, 0.9], "area": 0.6, "cx": 0.5, "mask": "person_1.png"}]))  # to the edge
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (480, 832)).save(frame)
+    c = {"upload_id": "up_face", "text": "a man"}
+    lengths = {}
+    monkeypatch.setattr(app, "_body_length", lambda image, box: lengths["photo" if image.name == "image.png" else "clip"])
+    tall, square = (0.3, 0.1, 0.3, 0.6), (0.1, 0.4, 0.8, 0.6)  # in the frame: a tall outline, a wide one
+    lengths.update(photo=1.6, clip=6.3)
+    assert app._needs_body(c, square, frame)  # a bust for a performer seen to the waist or more
+    lengths.update(photo=1.6, clip=2.0)
+    assert not app._needs_body(c, square, frame)  # a head-and-shoulders performer: the bust is right
+    lengths.update(photo=4.5, clip=8.0)
+    assert not app._needs_body(c, tall, frame)  # waist-up photos render fine
+    lengths.update(photo=1.6, clip=None)  # an animal: by where it ends, or by shape
+    assert app._needs_body(c, tall, frame) and not app._needs_body(c, (0.1, 0.5, 0.8, 0.5), frame)
+    lengths.update(photo=None, clip=6.0)  # a drawing: left as it is
+    assert not app._needs_body(c, square, frame)

@@ -93,6 +93,9 @@ class MatchParams:
     outfit_side: str = ""  # with two people in the picture: "left" | "right", who wears `outfit`
     outfit2: Any = None  # with two people: what the one on the right wears (then `outfit` is the left one's)
     outfit2_text: str = ""
+    # A character photo cut off at the chest, on a canvas padded below it: draw the rest of the body. Measured:
+    # a head-and-shoulders photo for a performer seen head to foot was pasted as a bust, then dropped (bench).
+    whole_body: bool = False
     product: Any = None  # swap: an object the performer now holds
     product_text: str = ""
     product_hand: str = ""  # "left" | "right": the side of the picture of the hand that stays in view
@@ -175,8 +178,10 @@ class MatchParams:
             raise ReferenceError("more than two pictures besides the first don't fit in one edit: describe one in words")
         if self.scene == "new" and self.location is None and not self.background.strip():
             raise ReferenceError("describe the new background or give a location image")
+        if self.whole_body and (self.base != "frame" or len(slots(self)) or self.style or self.scene != "keep"):
+            raise ReferenceError("completing a body is an edit of the photo alone")
         if (self.character is None and self.location is None and self.outfit is None and self.product is None
-                and not self.outfit_text.strip() and not self.style and self.scene == "keep"):
+                and not self.outfit_text.strip() and not self.style and self.scene == "keep" and not self.whole_body):
             raise ReferenceError("nothing to change: give a character, a location, a style or a new background")
         if self.props.strip() and self.base == "frame":
             raise ReferenceError("props are for another place: the clip's own frame already has them")
@@ -258,6 +263,11 @@ def _prompt_elsewhere(p: MatchParams) -> str:
 
 
 def prompt_for(p: MatchParams) -> str:
+    if p.whole_body:
+        return (f"Complete this picture downwards: draw the rest of the {p.subject}'s body below the cut, so the "
+                f"whole {p.subject} stands facing the camera, from head to feet, arms relaxed at the sides. Keep the "
+                f"face, hair and clothes exactly as they are, in the same style, add what the rest of the outfit "
+                f"would be, on the same plain background. One single picture.")
     if p.base != "frame":
         return _prompt_elsewhere(p)
     sl = slots(p)
