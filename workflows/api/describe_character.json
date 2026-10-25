@@ -1,0 +1,52 @@
+{
+ "clip": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "qwen3vl_8b_int8_convrot.safetensors",
+   "type": "stable_diffusion",
+   "device": "default"
+  }
+ },
+ "frame": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "character.png"
+  }
+ },
+ "frame_rs": {
+  "class_type": "FluxKontextImageScale",
+  "inputs": {
+   "image": [
+    "frame",
+    0
+   ]
+  }
+ },
+ "gen": {
+  "class_type": "TextGenerate",
+  "inputs": {
+   "clip": [
+    "clip",
+    0
+   ],
+   "prompt": "Describe the main person or character in this picture so an artist could redraw them, in one line of at most 30 words: apparent age and gender, build, face shape, skin tone, hair colour and style, facial hair, glasses, and every clothing item they wear with its colour, including hats. Only what is on their body: never an object beside them or on a table, even one that matches their clothes. Only what they have, never what they lack. No background, no pose, no names, no brand names, no left or right. Reply with the line only.",
+   "image": [
+    "frame_rs",
+    0
+   ],
+   "max_length": 120,
+   "sampling_mode": "off"
+  }
+ },
+ "save": {
+  "class_type": "SaveText",
+  "inputs": {
+   "text": [
+    "gen",
+    0
+   ],
+   "filename_prefix": "recast/describe_image",
+   "format": "txt"
+  }
+ }
+}

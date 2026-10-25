@@ -52,16 +52,20 @@ def frames_for(segments: int) -> int:
     return SEGMENT_FRAMES + SEGMENT_STRIDE * (segments - 1)
 
 
+MIN_NEW = 12  # frames (0.75 s): the least a later chunk must add to be worth its own pass
+
+
 def chunk_lengths(frames: int, *, chunk: int, overlap: int) -> list[int]:
     """Frames in each chunk of a `frames`-frame video: whole chunks, then a shorter last one, so a clip of any
     length renders only what it needs. Each later chunk starts `overlap` frames back (it anchors on them).
-    Every length is 1 + 4n, which Wan's latent needs, so up to 3 frames at the end are dropped; a last chunk
-    that would add nothing past its overlap is left out."""
+    Every length is 1 + 4n, which Wan's latent needs, so up to 3 frames at the end are dropped. A last chunk
+    that would add fewer than MIN_NEW frames past its overlap is left out: a whole pass of the model for a
+    fraction of a second (a 10 s ask would be 81 + 81 + 9 frames, the last adding 4)."""
     out: list[int] = []
     start = 0
     while True:
         length = min(chunk, (frames - start - 1) // 4 * 4 + 1)
-        if out and length <= overlap:
+        if out and length - overlap < MIN_NEW:
             break
         out.append(length)
         if length < chunk or start + length >= frames:

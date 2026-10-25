@@ -1,0 +1,63 @@
+{
+ "frame": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "frame.png"
+  }
+ },
+ "sam": {
+  "class_type": "CheckpointLoaderSimple",
+  "inputs": {
+   "ckpt_name": "sam3.1_multiplex_fp16.safetensors"
+  }
+ },
+ "words": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "sam",
+    1
+   ],
+   "text": "person:8, animal:4"
+  }
+ },
+ "detect": {
+  "class_type": "SAM3_Detect",
+  "inputs": {
+   "model": [
+    "sam",
+    0
+   ],
+   "image": [
+    "frame",
+    0
+   ],
+   "conditioning": [
+    "words",
+    0
+   ],
+   "threshold": 0.5,
+   "refine_iterations": 2,
+   "individual_masks": true
+  }
+ },
+ "as_image": {
+  "class_type": "MaskToImage",
+  "inputs": {
+   "mask": [
+    "detect",
+    0
+   ]
+  }
+ },
+ "save": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "images": [
+    "as_image",
+    0
+   ],
+   "filename_prefix": "recast/people"
+  }
+ }
+}

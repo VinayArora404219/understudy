@@ -1,0 +1,344 @@
+{
+ "video": {
+  "class_type": "LoadVideo",
+  "inputs": {
+   "file": "drive.mp4"
+  }
+ },
+ "parts": {
+  "class_type": "GetVideoComponents",
+  "inputs": {
+   "video": [
+    "video",
+    0
+   ]
+  }
+ },
+ "ref": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "reference.png"
+  }
+ },
+ "sam": {
+  "class_type": "CheckpointLoaderSimple",
+  "inputs": {
+   "ckpt_name": "sam3.1_multiplex_fp16.safetensors"
+  }
+ },
+ "ref_words": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "sam",
+    1
+   ],
+   "text": "person"
+  }
+ },
+ "ref_track": {
+  "class_type": "SAM3_VideoTrack",
+  "inputs": {
+   "images": [
+    "ref",
+    0
+   ],
+   "model": [
+    "sam",
+    0
+   ],
+   "conditioning": [
+    "ref_words",
+    0
+   ],
+   "detection_threshold": 0.5,
+   "max_objects": 1,
+   "detect_interval": 1
+  }
+ },
+ "unet": {
+  "class_type": "UnetLoaderGGUF",
+  "inputs": {
+   "unet_name": "SCAIL-2-Q4_K_M.gguf"
+  }
+ },
+ "dpo": {
+  "class_type": "LoraLoaderModelOnly",
+  "inputs": {
+   "model": [
+    "unet",
+    0
+   ],
+   "lora_name": "wan2.1_SCAIL_2_DPO_lora_bf16.safetensors",
+   "strength_model": 1.0
+  }
+ },
+ "fast": {
+  "class_type": "LoraLoaderModelOnly",
+  "inputs": {
+   "model": [
+    "dpo",
+    0
+   ],
+   "lora_name": "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+   "strength_model": 0.8
+  }
+ },
+ "shift": {
+  "class_type": "ModelSamplingSD3",
+  "inputs": {
+   "model": [
+    "fast",
+    0
+   ],
+   "shift": 5.0
+  }
+ },
+ "clip": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+   "type": "wan",
+   "device": "default"
+  }
+ },
+ "pos": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "clip",
+    0
+   ],
+   "text": "In the frame, A young woman with a narrow oval face, light freckles, green eyes and a pink chin-length bob, in a yellow raincoat, who stands facing forward, both hands at the sides. They are in a neon-lit arcade at night, as in the picture."
+  }
+ },
+ "neg": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "clip",
+    0
+   ],
+   "text": ""
+  }
+ },
+ "vae": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "wan_2.1_vae.safetensors"
+  }
+ },
+ "cv": {
+  "class_type": "CLIPVisionLoader",
+  "inputs": {
+   "clip_name": "clip_vision_h.safetensors"
+  }
+ },
+ "cv_ref": {
+  "class_type": "CLIPVisionEncode",
+  "inputs": {
+   "clip_vision": [
+    "cv",
+    0
+   ],
+   "image": [
+    "ref",
+    0
+   ],
+   "crop": "none"
+  }
+ },
+ "sigmas": {
+  "class_type": "BasicScheduler",
+  "inputs": {
+   "model": [
+    "fast",
+    0
+   ],
+   "scheduler": "simple",
+   "steps": 6,
+   "denoise": 1.0
+  }
+ },
+ "sampler": {
+  "class_type": "KSamplerSelect",
+  "inputs": {
+   "sampler_name": "euler"
+  }
+ },
+ "drive_words": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "sam",
+    1
+   ],
+   "text": "person"
+  }
+ },
+ "c0_frames": {
+  "class_type": "ImageFromBatch",
+  "inputs": {
+   "image": [
+    "parts",
+    0
+   ],
+   "batch_index": 0,
+   "length": 81
+  }
+ },
+ "c0_track": {
+  "class_type": "SAM3_VideoTrack",
+  "inputs": {
+   "images": [
+    "c0_frames",
+    0
+   ],
+   "model": [
+    "sam",
+    0
+   ],
+   "conditioning": [
+    "drive_words",
+    0
+   ],
+   "detection_threshold": 0.5,
+   "max_objects": 1,
+   "detect_interval": 1
+  }
+ },
+ "c0_masks": {
+  "class_type": "SCAIL2ColoredMask",
+  "inputs": {
+   "driving_track_data": [
+    "c0_track",
+    0
+   ],
+   "ref_track_data": [
+    "ref_track",
+    0
+   ],
+   "object_indices": "",
+   "sort_by": "left_to_right",
+   "replacement_mode": false
+  }
+ },
+ "c0_scail": {
+  "class_type": "WanSCAILToVideo",
+  "inputs": {
+   "positive": [
+    "pos",
+    0
+   ],
+   "negative": [
+    "neg",
+    0
+   ],
+   "vae": [
+    "vae",
+    0
+   ],
+   "width": 480,
+   "height": 832,
+   "length": 81,
+   "batch_size": 1,
+   "pose_strength": 1.0,
+   "pose_start": 0.0,
+   "pose_end": 1.0,
+   "video_frame_offset": 0,
+   "previous_frame_count": 5,
+   "pose_video": [
+    "c0_frames",
+    0
+   ],
+   "pose_video_mask": [
+    "c0_masks",
+    0
+   ],
+   "replacement_mode": false,
+   "reference_image": [
+    "ref",
+    0
+   ],
+   "reference_image_mask": [
+    "c0_masks",
+    1
+   ],
+   "clip_vision_output": [
+    "cv_ref",
+    0
+   ]
+  }
+ },
+ "c0_sample": {
+  "class_type": "SamplerCustom",
+  "inputs": {
+   "model": [
+    "shift",
+    0
+   ],
+   "add_noise": true,
+   "noise_seed": 1,
+   "cfg": 1.0,
+   "positive": [
+    "c0_scail",
+    0
+   ],
+   "negative": [
+    "c0_scail",
+    1
+   ],
+   "sampler": [
+    "sampler",
+    0
+   ],
+   "sigmas": [
+    "sigmas",
+    0
+   ],
+   "latent_image": [
+    "c0_scail",
+    2
+   ]
+  }
+ },
+ "c0_dec": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "c0_sample",
+    1
+   ],
+   "vae": [
+    "vae",
+    0
+   ]
+  }
+ },
+ "out": {
+  "class_type": "CreateVideo",
+  "inputs": {
+   "images": [
+    "c0_dec",
+    0
+   ],
+   "fps": 16.0,
+   "audio": [
+    "parts",
+    1
+   ]
+  }
+ },
+ "save": {
+  "class_type": "SaveVideo",
+  "inputs": {
+   "video": [
+    "out",
+    0
+   ],
+   "filename_prefix": "recast/recast",
+   "format": "auto",
+   "codec": "auto"
+  }
+ }
+}

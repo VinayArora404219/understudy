@@ -20,3 +20,10 @@ def test_the_recipe_carries_the_graph_that_ran_and_what_came_after(tmp_path):
     assert saved["graph"] == g and saved["graph_sha256"] == recipe.graph_sha(g)  # opens in ComfyUI as is
     assert saved["finishing"] == {"audio": "the clip's own"} and r["recipe_version"] == 2
     assert saved["inputs"]["drive"]["sha256"] == recipe.sha256(files["d.mp4"])
+
+
+def test_the_exported_workflows_match_the_code():
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, "tools/export_workflows.py", "--check"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + " (run tools/export_workflows.py)"
