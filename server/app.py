@@ -15,6 +15,7 @@ puts sign-in, per-link quotas and a database in front of the same pipeline.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -315,7 +316,7 @@ def _lower_article(text: str) -> str:
 def _summary(p: dict) -> str:
     parts = []
     chars = [{**c, "text": _lower_article(c["text"])} for c in _characters(p)]
-    if p.get("outfit"):
+    if p.get("outfit") and not chars:
         return f"The performer stays themselves, now wearing {p['outfit']['text'].strip()}; everything else as filmed."
     if p.get("prop"):
         return (f"The performer stays themselves, now holding {p['prop']['text'].strip()}; everything else as filmed.")
@@ -326,6 +327,8 @@ def _summary(p: dict) -> str:
         parts.append(f"The performer becomes {chars[0]['text'].strip()}")
     else:
         parts.append("The performers stay themselves" if p.get("performers") == 2 else "The performer stays themselves")
+    if p.get("outfit"):
+        parts.append(f"{'both ' if len(chars) == 2 else ''}wearing {p['outfit']['text'].strip()}")
     if p.get("style"):
         parts.append(f"drawn as {styles.get(p['style']).name}")
     mode = p["place"]["mode"]
@@ -498,22 +501,82 @@ def _picked_frame(work: dict, d: Path, frame: Path) -> Path:
     return _named(dst, "frame_picked")
 
 
-def _cut_out(uid: str, photo: Path, dst: Path, colour: int) -> Path | None:
-    """The character alone from their photo (people.cut_out); the people found are kept per upload."""
+def _home_of(c: dict) -> Path:
+    """Where a character's photo and what is learnt from it live: their upload, or the dressed copy (_dressed)."""
+    return DATA / c["dressed"] if c.get("dressed") else _upload_path(c["upload_id"], "image").parent
+
+
+def _photo_of(c: dict) -> Path:
+    return _home_of(c) / "dressed.png" if c.get("dressed") else _upload_path(c["upload_id"], "image")
+
+
+def _dressed(c: dict, outfit: dict) -> dict:
+    """The character wearing the outfit (Recast + outfit): their own photo dressed by Qwen-Image-Edit, then their
+    words read again from that photo, so the render's prompt and its reference picture agree. Kept per
+    character and outfit, so another version and the render reuse it."""
     from recast import runner
 
-    src = _upload_path(uid, "image").parent / "cutout_people"
+    src = _upload_path(c["upload_id"], "image")
+    item = _upload_path(outfit["upload_id"], "image") if outfit.get("upload_id") else None
+    text = outfit["text"].strip()
+    key = hashlib.sha256(json.dumps([text, outfit.get("upload_id") or ""]).encode()).hexdigest()[:12]
+    home = src.parent / f"dressed_{key}"
+    done = home / "dressed.json"
+    if not done.exists():
+        home.mkdir(exist_ok=True)
+        photo = media.clean_image(src, home / "photo.png")
+        worn = media.clean_image(item, home / "outfit.png") if item else None
+        mp = reflib.MatchParams(frame=photo.name, base="frame", outfit=worn and worn.name, outfit_text=text,
+                                subject=reflib.cast_word([c["text"]]), cutout_colour=media.edge_colour(photo),
+                                seed=1, prefix=f"recast/dress_{c['upload_id']}_{key}")
+        try:
+            mp.validate()
+        except reflib.ReferenceError as e:
+            raise UserError(str(e).capitalize() + ".") from e
+        with _comfy() as client:
+            def make():
+                mp.frame = client.assets.from_file(photo)
+                if worn:
+                    mp.outfit = client.assets.from_file(worn)
+                return reflib.build(mp)
+            files = runner.download(runner.follow(runner.submit_graph(client, make, home / "edit_submission.json")),
+                                    home / "edit", node_id=reflib.FINAL_NODE)
+            if not files:
+                raise RuntimeError("dressing the character finished without an image")
+            dressed = media.clean_image(files[0], home / "dressed.png")
+            try:
+                gjob = runner.submit_graph(
+                    client, lambda: describe.build_role(client.assets.from_file(dressed), "character",
+                                                        prefix=f"recast/dress_{c['upload_id']}_{key}_words"),
+                    home / "describe_submission.json")
+                out = runner.download(runner.follow(gjob), home / "describe", node_id=describe.FINAL_NODE)
+                words = describe.parse_role(out[0].read_text(), "character") if out else ""
+            except Exception:  # their own words plus the outfit still say it
+                log.exception("describing the dressed character %s failed", c["upload_id"])
+                words = ""
+        _write_json(done, {"text": words or f"{c['text'].strip().rstrip('.')}, wearing {text}", "outfit": text})
+    return {**c, "dressed": str(home.relative_to(DATA)), "text": json.loads(done.read_text())["text"],
+            "keep_outfit": True}
+
+
+def _cut_out(c: dict, photo: Path, dst: Path, colour: int) -> Path | None:
+    """The character alone from their photo (people.cut_out); the people found are kept with the photo."""
+    from recast import runner
+
+    home = _home_of(c)
+    src = home / "cutout_people"
+    tag = c["upload_id"] + (f"_{home.name}" if c.get("dressed") else "")
     try:
         if not (src / "people.json").exists():
             with _comfy() as client:
                 gjob = runner.submit_graph(
-                    client, lambda: people.build_detect(client.assets.from_file(photo), prefix=f"recast/cut_{uid}"),
-                    src.parent / "cutout_submission.json")
+                    client, lambda: people.build_detect(client.assets.from_file(photo), prefix=f"recast/cut_{tag}"),
+                    home / "cutout_submission.json")
                 files = runner.download(runner.follow(gjob), src / "detected", node_id=people.FINAL_NODE)
             people.read(sorted(files), src)
         return people.cut_out(photo, people.load(src), src, dst, colour)
     except Exception:  # the whole photo still works; the cut-out only keeps its other things out
-        log.exception("cutting the character out of %s failed", uid)
+        log.exception("cutting the character out of %s failed", tag)
         return None
 
 
@@ -534,7 +597,7 @@ def _cast_pairs(work: dict, p: dict, chars: list[dict]) -> list[dict]:
     if len(chosen) != len(chars) or not (src / "frame.png").exists():
         return []
     return [{"person": f.id, "box": list(f.box), "frame_url": _url(src / "frame.png"),
-             "character_url": _url(_upload_path(c["upload_id"], "image")), "text": c.get("text", "")}
+             "character_url": _url(_photo_of(c)), "text": c.get("text", "")}
             for f, c in zip(chosen, chars)]
 
 
@@ -553,11 +616,21 @@ def run_preview(j: dict, seed: int) -> None:
     d, p = _job_dir(j["id"]), j["params"]
     frame = d / work["frame"]
     chars = _characters(p)
+    dress = _mode(p) == "recast" and p.get("outfit")
     cast = _cast_pairs(work, p, chars)
     if cast:  # who replaces whom, shown at once; its first 5 seconds take minutes (_first_chunk)
-        _update(j, progress={"stage": "starting_gpu", "eta_seconds": FIRST_SECONDS + 60},
+        _update(j, progress={"stage": "dressing" if dress else "starting_gpu",
+                             "eta_seconds": FIRST_SECONDS + 60 + (DRESS_SECONDS * len(chars) if dress else 0)},
                 preview={"kind": "cast", "pending": True, "cast": cast, "seed": seed,
                          "frame_url": _url(_picked_frame(work, d, frame)), "prompt_summary": _summary(p)})
+    if dress:  # each character in the outfit first; from here on they are that photo and its words
+        chars = [_dressed(c, p["outfit"]) for c in chars]
+        if _cancelled(j):
+            return
+        cast = _cast_pairs(work, p, chars)
+        if cast:
+            _update(j, progress={"stage": "starting_gpu", "eta_seconds": FIRST_SECONDS + 60},
+                    preview={**(j.get("preview") or {}), "cast": cast})
     notes: list[str] = []
     poses, shots, bodies, side = ["", ""], ["", ""], ["", ""], ""
     found: list[describe.Performer] = []
@@ -607,6 +680,8 @@ def run_preview(j: dict, seed: int) -> None:
                   # cost accessories: with it, sunglasses put on mid-clip were missing; without, they came
                   # back (same seed, private regression clip). Another place is posed by the words, so keeps them.
                   "poses": [] if replace else bodies[:len(chars)]}
+        if dress:  # the render's prompt describes them as dressed (scail.prompt reads work["texts"])
+            engine["texts"] = [c["text"] for c in chars]
     elif swap:
         # The performer is recast as themselves (SCAIL-2, like Recast), so the clip still drives every frame:
         # on Animate-2, animating one edited still, sunglasses put on later never appeared, a car that drives
@@ -654,8 +729,8 @@ def run_preview(j: dict, seed: int) -> None:
         colour = media.edge_colour(frame)  # the room's own colour, so a leak of the backdrop blends in
         photos = []
         for i, c in enumerate(chars):
-            whole = media.clean_image(_upload_path(c["upload_id"], "image"), d / f"cast_{i}.png")
-            photos.append(_cut_out(c["upload_id"], whole, d / f"cast_{i}_cut.png", colour) or whole)
+            whole = media.clean_image(_photo_of(c), d / f"cast_{i}.png")
+            photos.append(_cut_out(c, whole, d / f"cast_{i}_cut.png", colour) or whole)
         picks = p["motion"].get("picks") or []
         found = people.load(DATA / work["people_dir"]) if picks and work.get("people_dir") else []
         boxes = [f.box for f in found if f.id in picks]
@@ -666,7 +741,7 @@ def run_preview(j: dict, seed: int) -> None:
             ref = scail.reference_sheet(photos, d / "reference.png")
         kind = "cast"
     elif engine and p["place"]["mode"] == "character" and len(chars) == 1:  # their photo, as it is, is the start
-        src = media.clean_image(_upload_path(chars[0]["upload_id"], "image"), d / "character_full.png")
+        src = media.clean_image(_photo_of(chars[0]), d / "character_full.png")
         ref = crop.to_shape(src, d / "reference.png", work["layout"])
     elif not changes:  # nothing to redraw: the performer is their own reference
         ref = media.fit_image(frame, d / "reference.png", layout=work["layout"], mode="crop")
@@ -677,7 +752,7 @@ def run_preview(j: dict, seed: int) -> None:
         base = "frame" if not chars else {"character": "character", "image": "location"}.get(mode, "frame")
         images: dict[str, Path] = {}
         for slot, c in zip(("character", "character2"), chars):
-            src = _upload_path(c["upload_id"], "image")
+            src = _photo_of(c)
             img = src
             if slot == base:  # the whole photo is the scene: shape it like the clip, never crop to the head
                 images[slot] = _named(crop.to_shape(media.clean_image(src, d / f"{slot}_full.png"),
@@ -692,7 +767,7 @@ def run_preview(j: dict, seed: int) -> None:
                                    "try a head-and-shoulders picture.")
             images[slot] = _named(media.clean_image(img, d / f"{slot}.png"), slot)
         for slot in ("outfit", "prop"):
-            if p.get(slot):
+            if p.get(slot) and not dress:  # a recast's outfit is already on the characters
                 src = _upload_path(p[slot]["upload_id"], "image")
                 name = "product" if slot == "prop" else slot
                 images[name] = _named(media.clean_image(src, d / f"{name}.png"), name)
@@ -712,7 +787,7 @@ def run_preview(j: dict, seed: int) -> None:
             side=side if base != "frame" else "", shot=shots[0] if base != "frame" else "",
             shot2=shots[1] if base != "frame" else "",
             cutout_colour=media.edge_colour(room) if mode in ("keep", "image", "character") else reflib.CUTOUT_GREY,
-            outfit_text=(p.get("outfit") or {}).get("text", ""), product_text=(p.get("prop") or {}).get("text", ""),
+            outfit_text="" if dress else (p.get("outfit") or {}).get("text", ""), product_text=(p.get("prop") or {}).get("text", ""),
             product_hand=hand if p.get("prop") else "", other_hand=other_hand if p.get("prop") and hand else "",
             style=p.get("style") or "", scene=scene, background=background,
             subject=p["subject"] if base == "frame" else reflib.cast_word([c["text"] for c in chars]),
@@ -855,6 +930,7 @@ def _first_chunk(j: dict, work: dict, d: Path, p: dict, ref: Path) -> tuple[dict
 
 
 FIRST_SECONDS = 330  # the first chunk on the 16 GB card, measured: loading, tracking, 6 steps and what follows
+DRESS_SECONDS = 120  # one character into the outfit, an image edit and a read of it: 166 s measured cold, less warm
 AFTER_STEPS = 75  # after the last step: decoding, tracking everyone else, putting them back as filmed
 
 

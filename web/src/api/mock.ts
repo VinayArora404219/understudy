@@ -84,7 +84,7 @@ function clipChecks(w: number, h: number, s: number): Check[] {
 }
 
 function title(p: JobParams): string {
-  const what = p.mode === "swap" ? (p.outfit ? "Outfit swap" : "Place swap") : p.characters.length === 2 ? "Duo recast" : p.characters.length ? "Recast" : p.style ? STYLES.find((s) => s.key === p.style)?.name ?? "Restyle" : "Move";
+  const what = p.mode === "swap" ? (p.outfit ? "New outfit" : "New place") : p.characters.length === 2 ? "Duo recast" : p.characters.length ? "Recast" : p.style ? STYLES.find((s) => s.key === p.style)?.name ?? "Restyle" : "Move";
   return `${what} · ${p.motion.length} s`;
 }
 

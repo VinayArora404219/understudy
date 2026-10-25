@@ -1,5 +1,6 @@
 """Who is recast is chosen in the start frame; a job can only name people that were found there."""
 import importlib
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -182,3 +183,47 @@ def test_quick_work_never_waits_behind_a_render(app, monkeypatch):
     with app._comfy("quick") as client:
         assert "small" in repr(client)
     assert app.os.environ["COMFY_BASE_URL"] == "http://big:1"  # put back for everyone else
+
+
+def test_recast_with_an_outfit_dresses_each_character_once(app, monkeypatch, tmp_path):
+    import contextlib
+    import shutil
+    from types import SimpleNamespace
+
+    from recast import runner
+
+    fake = SimpleNamespace(assets=SimpleNamespace(from_file=lambda path: path.name))
+    prompts, graphs = [], []
+
+    def submit(client, make, state):
+        g = make()
+        graphs.append(state.name)
+        prompts.extend(n["inputs"]["prompt"] for k, n in g.items() if k == "pos")
+        return state
+
+    def download(gjob, d, node_id):
+        d.mkdir(parents=True, exist_ok=True)
+        out = d / ("out.png" if gjob.name == "edit_submission.json" else "out.txt")
+        out.write_text("words")
+        return [out]
+
+    monkeypatch.setattr(app, "_comfy", lambda lane=None: contextlib.nullcontext(fake))
+    monkeypatch.setattr(app.media, "clean_image", lambda src, dst, **kw: Path(shutil.copy(src, dst)))
+    monkeypatch.setattr(app.media, "edge_colour", lambda path: 0x808080)
+    monkeypatch.setattr(app.describe, "build_role", lambda img, role, prefix: {})
+    monkeypatch.setattr(app.describe, "parse_role", lambda text, role: "a man in glasses and a red raincoat")
+    monkeypatch.setattr(runner, "submit_graph", submit)
+    monkeypatch.setattr(runner, "follow", lambda j: j)
+    monkeypatch.setattr(runner, "download", download)
+
+    c = {"upload_id": "up_face", "text": "a man in glasses"}
+    dressed = app._dressed(c, {"text": "a red raincoat"})
+    assert graphs == ["edit_submission.json", "describe_submission.json"]
+    assert "now wears a red raincoat" in prompts[0]  # words alone: no outfit picture
+    assert dressed["text"] == "a man in glasses and a red raincoat" and dressed["keep_outfit"]
+    assert app._photo_of(dressed).name == "dressed.png" and app._photo_of(c).name == "image.png"
+    assert app._dressed(c, {"text": "a red raincoat"}) == dressed and len(graphs) == 2  # kept, not redone
+    assert app._dressed(c, {"text": "a blue suit"})["dressed"] != dressed["dressed"]  # another outfit, another copy
+
+    p = _params([1], outfit={"text": "a red raincoat"})
+    assert "wearing a red raincoat" in app._summary(p) and "stays themselves" not in app._summary(p)

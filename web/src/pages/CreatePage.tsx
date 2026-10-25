@@ -15,7 +15,7 @@ const LENGTHS: Length[] = [5, 10, 15, 20];
 const MODES: [Mode, string, string][] = [
   ["recast", "Recast", "Someone else performs your moves: a person, a mascot, an animal."],
   ["restyle", "Restyle", "Your video, redrawn in a look: anime, toy, pixel art and more."],
-  ["swap", "Swap", "You stay you. Change one thing: your outfit or the place."],
+  ["swap", "Restage", "You stay you. Change one thing: your outfit or the place."],
 ];
 
 const MAX_PICKS = 2;
@@ -37,14 +37,14 @@ function autoPicks(list: Person[]): number[] {
   const clear = list.filter((p) => p.area >= biggest * 0.25);
   return clear.length <= MAX_PICKS ? clear.map((p) => p.id) : [];
 }
-interface CharSlot { upload: Upload; text: string; keepOutfit: boolean }
+interface CharSlot { upload: Upload; text: string }
 type SwapWhat = "outfit" | "place";
 interface Change {
   swap: SwapWhat;
   characters: (CharSlot | undefined)[]; // [only] or [left, right]
   style?: string;
   place: { mode: PlaceMode; text: string; upload?: Upload };
-  outfit?: { upload: Upload; text: string };
+  outfit?: { upload?: Upload; text: string }; // Restage needs the picture; Recast can say it in words alone
   finish: JobParams["finish"];
   audio: JobParams["audio"];
 }
@@ -101,7 +101,7 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
   const blocked = motion.upload?.checks.some((c) => c.level === "block");
   const clipSeconds = motion.upload?.info.seconds ?? motion.preset?.seconds ?? 0;
   const ready = (motion.upload && !blocked) || motion.preset;
-  // Recast replaces chosen people, so someone must be chosen; Swap only needs the count; Restyle redraws everyone
+  // Recast replaces chosen people, so someone must be chosen; Restage only needs the count; Restyle redraws everyone
   const lookForPeople = !!motion.upload && !blocked && mode !== "restyle";
   const canGo = ready && (mode !== "recast" || !motion.upload || motion.picks.length > 0);
 
@@ -198,7 +198,7 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
 }
 
 /** Looks for everyone in the clip's start frame once a clip is in. Recast shows them to choose who is replaced;
- *  Swap (show=false) only keeps the count, since an outfit needs exactly one person. */
+ *  Restage (show=false) only keeps the count, since an outfit needs exactly one person. */
 function WhoToReplace({ upload, start, show, motion, setMotion }: {
   upload: Upload; start: number; show: boolean; motion: Motion; setMotion: React.Dispatch<React.SetStateAction<Motion>>;
 }) {
@@ -297,16 +297,19 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
   const place = !wantPlace ? { ...change.place, mode: "keep" as PlaceMode }
     : placeModes.some(([m]) => m === change.place.mode) ? change.place : { ...change.place, mode: fallback };
   const style = mode === "swap" ? undefined : change.style;
-  const outfit = mode === "swap" && swap === "outfit" ? change.outfit : undefined;
+  const outfit = mode === "swap" && swap === "outfit" ? change.outfit
+    : mode === "recast" && (change.outfit?.text.trim() || change.outfit?.upload) ? change.outfit : undefined;
+  const outfitOk = !outfit || outfit.text.trim().length > 2;
   const characters = mode === "recast" ? filled : [];
 
   const placeOk = (place.mode !== "describe" || place.text.trim().length > 2) && (place.mode !== "image" || !!place.upload);
   const ready = mode === "recast"
-    ? filled.length === (two ? 2 : 1) && filled.every((c) => c.text.trim().length > 2) && placeOk
+    ? filled.length === (two ? 2 : 1) && filled.every((c) => c.text.trim().length > 2) && placeOk && outfitOk
     : mode === "restyle" ? !!style
-    : swap === "outfit" ? !!outfit && outfit.text.trim().length > 2
+    : swap === "outfit" ? !!outfit?.upload && outfitOk
     : place.mode !== "keep" && placeOk;
-  const missing = mode === "recast" ? (two ? "Add a character for each performer." : "Add a character image.")
+  const missing = mode === "recast" ? (filled.length === (two ? 2 : 1) && !outfitOk ? "Say what the outfit is."
+      : two ? "Add a character for each performer." : "Add a character image.")
     : mode === "restyle" ? "Pick a look." : swap === "place" ? "Say where to go." : `Add the ${swap} and say what it is.`;
 
   const setSlot = (i: number, c: CharSlot | undefined) => {
@@ -317,17 +320,17 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
 
   const start = useMutation({
     mutationFn: async () => {
-      const refs: CharacterRef[] = characters.map((c) => ({ upload_id: c.upload.id, text: c.text, keep_outfit: c.keepOutfit }));
+      const refs: CharacterRef[] = characters.map((c) => ({ upload_id: c.upload.id, text: c.text, keep_outfit: false }));
       const params: JobParams = {
         mode,
         motion: { upload_id: motion.upload?.id, preset_id: motion.preset?.id, start: motion.start, length: motion.length,
           picks: mode === "recast" && motion.picks.length ? motion.picks : undefined },
         performers,
-        subject: "person", // Swap's items need a person; with picks the server reads person or animal from the clip
+        subject: "person", // Restage's items need a person; with picks the server reads person or animal from the clip
         characters: refs,
         style,
         place: { mode: place.mode, text: place.text || undefined, upload_id: place.upload?.id },
-        outfit: outfit && { upload_id: outfit.upload.id, text: outfit.text },
+        outfit: outfit && { upload_id: outfit.upload?.id, text: outfit.text },
         finish: change.finish,
         audio: change.audio,
       };
@@ -359,7 +362,7 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
     <section className="space-y-6">
       {mode === "recast" && <>
         <SectionTitle step="Step 2" title={two ? "Who performs instead?" : "Who performs instead?"}
-          hint="Your moves, someone else's look. Add a look or a new place too if you like." />
+          hint="Your moves, someone else's look. Add an outfit, a look or a new place too if you like." />
         <Card className="space-y-6 p-5">
           {(chosen.length ? chosen : two ? [undefined, undefined] : [undefined]).map((person, i) => (
             <div key={person?.id ?? i} className={cx(i > 0 && "border-t border-ink-700/70 pt-6")}>
@@ -381,6 +384,19 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
             </div>
           )}
         </Card>
+        <Option title="Outfit" line={`Optional: dress ${two ? "both characters" : "your character"} in something else.`} on={!!outfit}>
+          <ImagePick label="Outfit image" image={change.outfit?.upload} hint="Optional: a photo of the clothes. Words alone work too."
+            onPick={(u) => setChange({ ...change, outfit: { upload: u, text: change.outfit?.text ?? "" } })}
+            onClear={() => setChange({ ...change, outfit: change.outfit && { text: change.outfit.text } })} />
+          {change.outfit?.upload ? (
+            <ItemText role="outfit" upload={change.outfit.upload} value={change.outfit.text}
+              onChange={(t) => setChange({ ...change, outfit: { ...change.outfit, text: t } })} />
+          ) : (
+            <TextField label="What they wear" placeholder="e.g. a yellow raincoat and rubber boots" value={change.outfit?.text ?? ""}
+              onChange={(t) => setChange({ ...change, outfit: { ...change.outfit, text: t } })}
+              help={`${two ? "Both characters wear it. Their" : "Their"} faces and hair stay; we dress their photo first, and the preview shows it.`} />
+          )}
+        </Option>
         <Option title="Look" line="Optional: draw your character in a style." on={!!change.style}>
           <StyleGrid value={change.style} onChange={(k) => setChange({ ...change, style: k })} />
         </Option>
@@ -395,19 +411,19 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
       </>}
 
       {mode === "swap" && <>
-        <SectionTitle step="Step 2" title="What do you swap?" hint="You stay you. One thing changes; the rest is redrawn to match your clip." />
+        <SectionTitle step="Step 2" title="What changes?" hint="You stay you. One thing changes; the rest is redrawn to match your clip." />
         <Card className="space-y-5 p-5">
           <Segmented label="" value={swap}
             options={[["outfit", "Outfit"], ["place", "Place"]]}
             onChange={(v) => setChange({ ...change, swap: v as SwapWhat })} />
           {!onePerson && swap === "place" && change.swap !== "place" && (
-            <p className="text-sm text-ink-500">An outfit swap needs one person in the clip; we found {found} in your first frame. A place swap works with any number.</p>
+            <p className="text-sm text-ink-500">A new outfit needs one person in the clip; we found {found} in your first frame. A new place works with any number.</p>
           )}
           {swap === "outfit" && <>
             <ImagePick label="Outfit image" image={change.outfit?.upload} hint="A product photo of the garment works best."
               onPick={(u) => setChange({ ...change, outfit: { upload: u, text: change.outfit?.text ?? "" } })}
               onClear={() => setChange({ ...change, outfit: undefined })} />
-            {change.outfit && <ItemText role="outfit" upload={change.outfit.upload} value={change.outfit.text}
+            {change.outfit?.upload && <ItemText role="outfit" upload={change.outfit.upload} value={change.outfit.text}
               onChange={(t) => setChange({ ...change, outfit: { ...change.outfit!, text: t } })} />}
           </>}
           {swap === "place" && placeEditor}
@@ -593,9 +609,9 @@ function Frame({ label, src, video, poster, loading, wait = "Building your previ
 /** While the preview renders: who replaces whom, at once, and the GPU job's progress over all of its phases. */
 function CastWhileRendering({ job, whole }: { job: Job; whole: boolean }) {
   const p = job.progress;
-  const pct = !p ? 0 : p.stage === "starting_gpu" ? 2 : p.stage === "waiting_for_gpu" ? 4 : p.stage === "loading_models" ? 8
+  const pct = !p ? 0 : p.stage === "dressing" ? 1 : p.stage === "starting_gpu" ? 2 : p.stage === "waiting_for_gpu" ? 4 : p.stage === "loading_models" ? 8
     : p.stage === "rendering" ? Math.round(12 + (70 * (p.step ?? 0)) / (p.steps || 6)) : 88;
-  const line = !p ? "Starting…" : p.stage === "starting_gpu" ? "Reading your clip…" : p.stage === "waiting_for_gpu" ? "Waiting for the GPU…"
+  const line = !p ? "Starting…" : p.stage === "dressing" ? "Dressing your characters in the outfit…" : p.stage === "starting_gpu" ? "Reading your clip…" : p.stage === "waiting_for_gpu" ? "Waiting for the GPU…"
     : p.stage === "loading_models" ? "Loading the models…" : p.stage === "rendering" ? `Drawing your video: step ${p.step} of ${p.steps}`
     : "Putting everyone else back as filmed…";
   const left = p?.eta_seconds ? ` · about ${Math.max(1, Math.round(p.eta_seconds / 60))} min left` : "";
@@ -644,12 +660,13 @@ function Summary({ mode, motion, change, rendersLeft }: { mode: Mode; motion: Mo
     if (mode === "recast") {
       change.characters.slice(0, two ? 2 : 1).forEach((c, i) => c && r.push([
         chosen[i] && two ? `For person ${chosen[i].id}` : two ? (i ? "Right" : "Left") : "Character", c.text || "Your image"]));
+      if (change.outfit?.text.trim()) r.push(["Outfit", change.outfit.text]);
       if (change.style) r.push(["Look", styles.data?.find((s) => s.key === change.style)?.name ?? change.style]);
       r.push(["Place", placeLabel]);
     } else if (mode === "restyle") {
       r.push(["Look", change.style ? styles.data?.find((s) => s.key === change.style)?.name ?? change.style : "Not chosen"]);
     } else {
-      r.push(["Swap", change.swap === "outfit" ? change.outfit?.text || "Outfit" : placeLabel]);
+      r.push(["Change", change.swap === "outfit" ? change.outfit?.text || "Outfit" : placeLabel]);
     }
     r.push(["Quality", change.finish === "480p" ? "480p native" : `${change.finish} (upscaled)`]);
     return r;
@@ -737,24 +754,15 @@ function CharacterPick({ who, slot, onChange }: { who: React.ReactNode; slot?: C
       {who && <div className="text-sm font-medium text-ink-100">{who}</div>}
       <ImagePick label="Character image" image={slot?.upload}
         hint="A clear photo or drawing. We use the face and look; the pose comes from your clip."
-        onPick={(u) => onChange({ upload: u, text: slot?.text ?? "", keepOutfit: slot?.keepOutfit ?? false })}
+        onPick={(u) => onChange({ upload: u, text: slot?.text ?? "" })}
         onClear={() => onChange(undefined)} />
       {slot && (
-        <>
-          <TextField label="How they look in the video" placeholder="e.g. young woman, long red hair, green hoodie, round glasses"
-            value={slot.text} onChange={(t) => onChange({ ...slot, text: t })}
-            busy={writing ? "Looking at the picture: face, hair and clothes…" : undefined}
-            help={writing ? "You can edit the words once they're written. This takes about half a minute."
-              : failed ? "We couldn't read the picture. The video draws them from the photo and these words: describe their face, hair and clothes."
-              : "Written from the picture. The video draws them from the photo and these words, so fix anything wrong. Their moves come from your clip: leave out names and actions."} />
-          <label className="flex items-start gap-3 text-sm text-ink-300">
-            <input type="checkbox" checked={slot.keepOutfit} onChange={(e) => onChange({ ...slot, keepOutfit: e.target.checked })}
-              className="mt-1 accent-[var(--color-accent)]" />
-            <span>Use the whole outfit from this picture
-              <span className="block text-xs text-ink-500">Off: we use the face and hair, so the pose stays yours. On: the clothes come
-                too, but a full-body picture can pull the pose with it. Describe the clothes above either way.</span></span>
-          </label>
-        </>
+        <TextField label="How they look in the video" placeholder="e.g. young woman, long red hair, green hoodie, round glasses"
+          value={slot.text} onChange={(t) => onChange({ ...slot, text: t })}
+          busy={writing ? "Looking at the picture: face, hair and clothes…" : undefined}
+          help={writing ? "You can edit the words once they're written. This takes about half a minute."
+            : failed ? "We couldn't read the picture. The video draws them from the photo and these words: describe their face, hair and clothes."
+            : "Written from the picture. The video draws them from the photo and these words, so fix anything wrong. Their moves come from your clip: leave out names and actions."} />
       )}
     </div>
   );

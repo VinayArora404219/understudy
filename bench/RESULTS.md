@@ -345,6 +345,20 @@ render; who replaces whom is shown at once, with the job's progress, while it re
 - **Cost on the 16 GB card:** a preview takes about 6.5 min instead of about 1 min; a 5 s video then costs
   nothing more, a longer one renders as before. "Try another version" re-rolls the seed the video uses.
 
+## Recast with a new outfit dresses the character first (2026-10-25)
+
+SCAIL-2 draws the character from one reference picture and the words, so an outfit has to be in that
+picture. Before the video, Qwen-Image-Edit-2511 dresses each character's own photo ("The person in the first
+picture now wears ..."), and Qwen3-VL reads the dressed photo for the render's words. Both are kept per
+character and outfit, so another version and the render reuse them.
+
+| Test (16 GB card, words only: "a yellow raincoat and rubber boots") | Result |
+|---|---|
+| Waist-up photo of an older man in a red jumper | the coat and boots are on him, and the face, hair and beard stay his |
+| Framing | asking for boots zoomed the edit out to the whole body, so the face is smaller. The cut-out is fitted to the performer's box anyway |
+| Words read back | "An elderly man with white hair and beard, wearing a yellow hooded raincoat, dark pants, and yellow boots" |
+| Time | 166 s from cold, both models loading |
+
 ## Running on Modal (2026-10-24)
 
 The judge build renders on Modal (`deploy/modal/`): ComfyUI 0.41.3 + comfy-api-proxy 0.1.6 per container, same

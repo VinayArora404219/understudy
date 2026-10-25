@@ -86,7 +86,7 @@ export interface JobParams {
   subject: "person" | "animal"; // with picks, the server reads it from the clip
   /** One per performer, or none. With two performers: [the one on the picture's left, the one on its right]. */
   characters: CharacterRef[];
-  outfit?: { upload_id: string; text: string };
+  outfit?: { upload_id?: string; text: string }; // the picture is optional in Recast, required in Restage
   style?: string;
   place: { mode: PlaceMode; text?: string; upload_id?: string };
   finish: "480p" | "720p" | "1080p";
@@ -128,7 +128,7 @@ export interface JobPreview {
 }
 
 export interface JobProgress {
-  stage: "waiting_for_gpu" | "starting_gpu" | "loading_models" | "rendering" | "finishing";
+  stage: "dressing" | "waiting_for_gpu" | "starting_gpu" | "loading_models" | "rendering" | "finishing";
   queue_position?: number;
   segment?: number;
   segments?: number;

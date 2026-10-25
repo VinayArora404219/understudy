@@ -9,14 +9,14 @@ const MODES = [
     swatch: "from-[#c8f560]/30 to-[#7dd3fc]/10" },
   { key: "restyle", name: "Restyle", line: "The same video, redrawn: anime, toy figure, pixel art, comic ink.",
     swatch: "from-[#f0abfc]/30 to-[#7dd3fc]/10" },
-  { key: "swap", name: "Swap", line: "You stay you. Change one thing: your outfit or the place.",
+  { key: "swap", name: "Restage", line: "You stay you. Change one thing: your outfit or the place.",
     swatch: "from-[#fde68a]/30 to-[#f9a8d4]/10" },
 ];
 
 const STEPS = [
   ["Pick a motion", "Film 4–30 seconds on your phone, or start from one of ours."],
-  ["Choose what changes", "Someone else performs, everything gets a new look, or one thing is swapped."],
-  ["Approve, then render", "See a still of the result in about a minute. Only then does the video render."],
+  ["Choose what changes", "Someone else performs, everything gets a new look, or you stay and one thing changes."],
+  ["Approve, then render", "See a preview first. Only then does the video render."],
 ];
 
 export function LandingPage() {

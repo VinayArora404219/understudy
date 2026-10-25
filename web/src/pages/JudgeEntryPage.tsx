@@ -45,7 +45,7 @@ export function JudgeEntryPage() {
             </p>
             <ol className="mx-auto mt-8 max-w-sm space-y-3 text-left text-sm text-ink-300">
               <li><span className="text-ink-100">1.</span> Pick a motion: your own clip or one of ours.</li>
-              <li><span className="text-ink-100">2.</span> Choose who is recast and as whom, or a look, or a swap.</li>
+              <li><span className="text-ink-100">2.</span> Choose who is recast and as whom, or a look, or a new outfit or place.</li>
               <li><span className="text-ink-100">3.</span> Check the preview. In your clip's own place it is the real start of your video.</li>
             </ol>
             <Link to="/create" aria-disabled={!ready}

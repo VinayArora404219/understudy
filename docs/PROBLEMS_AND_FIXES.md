@@ -67,6 +67,9 @@ Status: **fixed** unless marked **open**. The open ones are collected at the end
   four moments of the clip, and those words go into the edit and the render.
 - **A held product showed only while its hand stayed in view,** and it could not survive the move above.
   *Fix:* Product in hand was removed; Swap changes the outfit or the place.
+- **"Swap" sounded like swapping one person for another,** which is what Recast does. *Fix:* the mode is
+  called Restage on screen: you stay, and the outfit or the place changes. Entries above keep the old name;
+  the API's mode key is still `swap`.
 - **Depth can't see small things against the body,** so the sunglasses still vanished. *Fix:* the clip
   reader looks at four moments of the clip and names what a performer puts on, takes off or picks up. The
   visitor can edit that line before rendering.

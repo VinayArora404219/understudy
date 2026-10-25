@@ -14,9 +14,9 @@ Open weights only, end to end, run through the official
 
 | Mode | What changes | How |
 |---|---|---|
-| **Recast** | Someone else performs your moves: a person, a mascot, an animal. One or two performers, in the clip's own place or in another one. | SCAIL-2 (Wan2.1 14B), tracked by SAM 3.1. Another place starts from a picture made with Qwen-Image-Edit-2511. |
+| **Recast** | Someone else performs your moves: a person, a mascot, an animal. One or two performers, in the clip's own place or in another one, in their own clothes or a new outfit. | SCAIL-2 (Wan2.1 14B), tracked by SAM 3.1. Another place, or a new outfit, starts from a picture made with Qwen-Image-Edit-2511. |
 | **Restyle** | The whole video, redrawn in a look: anime, toy, pixel art, comic ink and more. | Wan2.1 VACE 14B, video to video on a depth map of every frame, so things that happen later in the clip still happen. |
-| **Swap** | You stay you. Change one thing: your outfit, or the place. | SCAIL-2 recasts you as yourself, so the clip still drives every frame. |
+| **Restage** | You stay you. Change one thing: your outfit, or the place. | SCAIL-2 recasts you as yourself, so the clip still drives every frame. |
 
 ## What it adds over the stock workflows
 
