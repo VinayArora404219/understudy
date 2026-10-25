@@ -407,6 +407,41 @@ So a character photo is now completed to a full body before the reference sheet 
 render with the reference sheet, this picks exactly the four that used the bust: a chest-up photo (3 face
 heights) and waist-up ones (4 to 7) rendered fine and are left as they are.
 
+## A whole-body photo for a performer seen from the chest up (2026-10-25)
+
+The reverse of the bust case. A private talking-head clip, the performer cut off at the chest by the frame's
+bottom edge (2.1 face heights of body), and a character photo from head to shoes (7.5 face heights).
+
+| Render | Result |
+|---|---|
+| The whole cut-out fitted to the performer's box, 5 s | his face is drawn a third the size of the performer's; the render takes his glasses and dark hair and keeps the performer's face shape and red sweater |
+| The cut-out first cropped to the performer's 2.1 face heights, same seed, 1024x576 | his own face and his denim shirt for the whole 5 s |
+
+So when a performer is cut off by the frame's bottom edge and their photo shows at least 1.5 face heights
+more body, the cut-out is cropped to the performer's length before it is placed. Over every past render
+with the reference sheet, this fires only on this one. A first version without the "cut off by the frame"
+condition also flagged two performers seen whole: their face-height counts vary (6.3 against 10 for a
+drawn full body), so length alone can't say a whole performer wants less.
+
+**Naming the drawn trousers didn't help.** In the bust case above, the drawn-in body has dark jeans and
+black loafers, and the words read from the bust name neither. Over 8 s his trousers flickered between dark
+indigo and light blue while the legs kicked. With "with dark jeans and black loafers" added to his words
+(same seed), they came out white for most of the clip. The performer is a white-legged animal, and its leg
+colour carries into the trousers whatever the words say. Reverted.
+
+## 576x1024 for tall clips (2026-10-25)
+
+The duo clip above, 8 s (two chunks), both characters recast, at 480x832 and at 576x1024.
+
+| Size | Render | Peak memory (16 GB card) | Look |
+|---|---|---|---|
+| 480x832 | 607 s | — | softer: hair edges, eyes, the watch strap and the phone screen blur |
+| 576x1024 | 1031 s (1.7x) | 14.6 GB | visibly sharper on the same details |
+
+576x1024 has 48% more pixels and is exactly 9:16, so delivery needs no crop. New 9:16 and 16:9 clips now
+render at 576x1024 and 1024x576. 3:4, 4:3 and square stay at about 480p, and Restyle (Wan VACE, not yet
+measured larger) stays at 480p. A 5 s talking head at 1024x576 took 606 s end to end, preview included.
+
 ## Running on Modal (2026-10-24)
 
 The judge build renders on Modal (`deploy/modal/`): ComfyUI 0.41.3 + comfy-api-proxy 0.1.6 per container, same
@@ -417,8 +452,8 @@ render never holds up a picker:
 
 | Lane | GPU | Runs | Idle → zero after |
 |---|---|---|---|
-| heavy | L40S 48 GB | renders; Recast-in-the-clip's-place preview (a real 5 s render) | 12 min |
-| quick | L4 24 GB | finding people (SAM 3.1), reading photos and clips (Qwen3-VL 8B), image-edit previews (Qwen-Image-Edit), cut-outs | 5 min |
+| heavy | L40S 48 GB | renders; Recast-in-the-clip's-place preview (a real 5 s render) | 2 min while testing |
+| quick | L4 24 GB | finding people (SAM 3.1), reading photos and clips (Qwen3-VL 8B), image-edit previews (Qwen-Image-Edit), cut-outs | 2 min while testing |
 
 **Same seed, same graph, different GPU.** Jobs from the development card were replayed through the app with
 identical parameters. The graphs the server submitted were identical apart from output file names, so any
@@ -457,7 +492,7 @@ the same dollars, and costs 2.4× less per idle minute, which is where most of a
 **Start-up.** Cold start to a ready endpoint: 14.7 s on the heavy lane, 30.3 s on the quick lane (ComfyUI
 itself boots in 11–15 s and 21–25 s). The first task after a cold start also loads its models (a photo
 reading took 62 s cold against 12–22 s warm). A warm request is about 1.1 s round trip from the test client.
-An idle tail costs about $0.43 (heavy, 12 min) and $0.09 (quick, 5 min).
+An idle minute costs about $0.036 (heavy) and $0.017 (quick); the idle window is set at deploy.
 
 **Two lanes at once.** With a Recast-in-the-clip's-place preview rendering on the heavy lane (steps 1→3 of
 6), a second create's photo reading finished in 22 s and its people search in 36 s on the quick lane,

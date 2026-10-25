@@ -7,7 +7,7 @@ import { Empty } from "./JobPage";
 
 /** The video's real first frame once there is one; before that, never the sheet of cut-outs the model works
  *  from (it is not how the video looks), but the clip's first frame. */
-const posterOf = (j: Job) => j.preview?.first_frame_url
+const posterOf = (j: Job) => j.result?.poster_url ?? j.preview?.first_frame_url
   ?? (j.preview?.kind === "cast" ? j.preview.frame_url : j.preview?.reference_url ?? j.preview?.frame_url);
 
 export function LibraryPage() {

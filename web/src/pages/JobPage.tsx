@@ -110,14 +110,17 @@ function InProgress({ job }: { job: Job }) {
               <span className={i === current ? "text-ink-100" : i < current ? "text-ink-300" : "text-ink-500"}>
                 {label}
                 {i === current && s === "waiting_for_gpu" && p?.queue_position ? ` · ${p.queue_position} ahead of you` : ""}
-                {i === current && s === "rendering" && p?.step ? ` · step ${p.step} of ${p.steps}` : ""}
+                {i === current && s === "rendering" && p?.step
+                  ? (p.segments ?? 1) > 1 ? ` · part ${p.segment ?? 1} of ${p.segments}, step ${p.step} of ${p.steps}`
+                    : ` · step ${p.step} of ${p.steps}`
+                  : ""}
               </span>
             </li>
           ))}
         </ol>
         {p?.stage === "rendering" && p.step && p.steps && (
           <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-ink-800">
-            <div className="h-full rounded-full bg-accent transition-[width] duration-700" style={{ width: `${(p.step / p.steps) * 100}%` }} />
+            <div className="h-full rounded-full bg-accent transition-[width] duration-700" style={{ width: `${(((p.segment ?? 1) - 1) * p.steps + p.step) / ((p.segments ?? 1) * p.steps) * 100}%` }} />
           </div>
         )}
         <p className="mt-6 text-sm text-ink-300">
@@ -150,7 +153,7 @@ function Choices({ job, className }: { job: Job; className?: string }) {
     rows.push(["Place", p.place.mode === "keep" ? "Your clip's own" : p.place.mode === "describe" ? p.place.text ?? "Described"
       : p.place.mode === "character" ? "The character's photo" : "From your picture"]);
   }
-  rows.push(["Quality", p.finish === "480p" ? "480p native" : `${p.finish} (upscaled)`]);
+  rows.push(["Quality", p.finish === "480p" ? "Native" : `${p.finish} (upscaled)`]);
   rows.push(["Sound", p.audio === "mute" ? "Muted" : "Your clip's own"]);
   rows.push(["Made", job.auto ? "Straight away" : "From a draft you approved"]);
   return (

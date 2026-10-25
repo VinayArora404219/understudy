@@ -99,8 +99,9 @@ and its preview takes about as long, since it is that render.
   so they can't be chosen. SCAIL-2 itself tells up to six people apart.
 - Where a chosen person stands partly behind someone left as filmed, the two bleed into each other (a
   beard showing through a cheek). People in clear view work best.
-- 480p at 16 fps native, SCAIL-2's own size and rate. 720p output is a lanczos upscale, and the result page
-  says so. Fast hands smear.
+- Native size: 576x1024 for tall clips and 1024x576 for wide ones; 3:4, 4:3 and square at about 480p, and
+  Restyle at 480p (not yet measured larger). All at 16 fps, SCAIL-2's own rate. 720p and 1080p output are a
+  lanczos upscale, and the result page says so. Fast hands smear.
 - One character's likeness drifts younger in some runs. Logos and printed text on clothes turn into invented
   text. Small accessories from a reference photo (glasses) appear in some renders and not others.
 - In the clip's place the room keeps the render's colour, so a white studio comes back slightly grey.

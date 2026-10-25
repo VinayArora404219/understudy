@@ -21,7 +21,7 @@ FFPROBE = "ffprobe"
 TIMEOUT_S = 300
 
 # Upload caps. A judge's clip is a few seconds of phone video.
-MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+MAX_UPLOAD_BYTES = 90 * 1024 * 1024  # under Cloudflare's 100 MB request cap in front of the public site
 MAX_SECONDS = 30.0  # upload cap; the rendered window is at most MAX_SEGMENTS long
 MIN_SECONDS = 1.0
 MAX_SIDE = 4096
@@ -53,7 +53,7 @@ Box = tuple[int, int, int, int]  # w, h, x, y of the picture inside the frame
 def layout_for(width: int, height: int) -> str:
     """The render layout whose shape is nearest to the picture's (by ratio, so 3:4 is not forced into 9:16)."""
     r = math.log(width / height)
-    return min(graph.ASPECT, key=lambda k: abs(r - math.log(graph.ASPECT[k][0] / graph.ASPECT[k][1])))
+    return min(graph.DEFAULT_LAYOUTS, key=lambda k: abs(r - math.log(graph.ASPECT[k][0] / graph.ASPECT[k][1])))
 
 
 def _exact(width: int, height: int, a: int, b: int) -> tuple[int, int]:

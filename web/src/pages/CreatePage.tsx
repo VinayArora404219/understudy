@@ -436,12 +436,12 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
       <Card className="p-5">
         <div className="grid gap-4 sm:grid-cols-2">
           <Segmented label="Video quality" value={change.finish}
-            options={[["480p", "480p native"], ["720p", "720p"], ["1080p", "1080p"]]}
+            options={[["480p", "Native"], ["720p", "720p"], ["1080p", "1080p"]]}
             onChange={(v) => setChange({ ...change, finish: v as Change["finish"] })} />
           <Segmented label="Sound" value={change.audio} options={[["original", "Keep original"], ["mute", "Mute"]]}
             onChange={(v) => setChange({ ...change, audio: v as Change["audio"] })} />
         </div>
-        <p className="mt-3 text-xs text-ink-500">The model renders at 480p, 16 fps. 720p and 1080p are upscaled, and labelled so.</p>
+        <p className="mt-3 text-xs text-ink-500">The model renders tall and wide clips at 576×1024, other shapes at about 480p, all at 16 fps. 720p and 1080p are upscaled, and labelled so.</p>
       </Card>
 
       {longer && (
@@ -687,7 +687,7 @@ function Summary({ mode, motion, change, creditsLeft }: { mode: Mode; motion: Mo
       });
       r.push(["Place", placeLabel]);
     }
-    r.push(["Quality", change.finish === "480p" ? "480p native" : `${change.finish} (upscaled)`]);
+    r.push(["Quality", change.finish === "480p" ? "Native" : `${change.finish} (upscaled)`]);
     return r;
   }, [mode, motion, change, styles.data]);
   const clip = motion.upload?.info.seconds ?? motion.preset?.seconds;

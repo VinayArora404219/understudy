@@ -17,8 +17,8 @@ def _clip(path, *, seconds=3.0, size="1080x1920", fps=30, audio=True):
 def test_probe_and_layout(tmp_path):
     info = media.validate_upload(_clip(tmp_path / "p.mp4"))
     assert (info.width, info.height, info.has_audio) == (1080, 1920, True)
-    assert info.layout == "portrait"
-    assert media.probe(_clip(tmp_path / "l.mp4", size="1920x1080", audio=False)).layout == "landscape"
+    assert info.layout == "portrait_hd"
+    assert media.probe(_clip(tmp_path / "l.mp4", size="1920x1080", audio=False)).layout == "landscape_hd"
 
 
 def test_normalize_hits_render_shape(tmp_path):
@@ -93,8 +93,8 @@ def test_upscale_keeps_aspect_and_says_so(tmp_path):
     assert not media.probe(media.without_audio(src, tmp_path / "m.mp4")).has_audio
 
 
-@pytest.mark.parametrize("wh,layout", [((1080, 1920), "portrait"), ((1202, 2312), "portrait"), ((1440, 1920), "portrait_3x4"),
-                                       ((1920, 1440), "landscape_4x3"), ((1920, 1080), "landscape"), ((710, 664), "square")])
+@pytest.mark.parametrize("wh,layout", [((1080, 1920), "portrait_hd"), ((1202, 2312), "portrait_hd"), ((1440, 1920), "portrait_3x4"),
+                                       ((1920, 1440), "landscape_4x3"), ((1920, 1080), "landscape_hd"), ((710, 664), "square")])
 def test_layout_is_the_nearest_shape(wh, layout):
     """3:4 phone video used to be forced into 9:16, losing about a quarter of the picture."""
     assert media.layout_for(*wh) == layout

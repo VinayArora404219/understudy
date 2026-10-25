@@ -21,8 +21,10 @@ import logging
 import os
 import queue
 import random
+import re
 import secrets
 import shutil
+import subprocess
 import threading
 import time
 import traceback
@@ -219,6 +221,11 @@ def _load() -> None:
     for p in (DATA / "jobs").glob("*/job.json"):
         j = json.loads(p.read_text())
         JOBS[j["id"]] = j
+        if j["state"] == "done" and not (j.get("result") or {}).get("poster_url") and (p.parent / "recast.mp4").exists():
+            try:  # finished before the result had its own poster: the card showed the picker's frame
+                _update(j, result={**j["result"], "poster_url": _url(_poster(p.parent / "recast.mp4", p.parent))})
+            except Exception:
+                log.exception("making the poster of %s failed", j["id"])
         if j["state"] == "matching" and j.get("auto"):  # on its way to the video: carry on, reattaching on the GPU
             _enqueue("preview", j["id"], (j.get("preview") or {}).get("seed", 1))
         elif j["state"] == "matching":  # a draft is free; ask again rather than resume
@@ -308,6 +315,8 @@ def _prepare(j: dict) -> dict:
     src = _upload_path(p["motion"]["upload_id"], "video")
     info = media.probe(src)
     layout, box = _clip_layout(p["motion"]["upload_id"], p.get("shape"))
+    if _engine(p) is vace:  # Wan VACE is measured at the 480p sizes only
+        layout = graph.SMALLER.get(layout, layout)
     start = float(p["motion"]["start"])
     usable = info.seconds - start
     if usable < media.MIN_SECONDS:
@@ -683,6 +692,27 @@ def _needs_body(c: dict, box: tuple, frame: Path) -> bool:
     return box[1] + box[3] < SEEN_TO or taller
 
 
+def _framed_like(cut: Path, box: tuple, frame: Path, dst: Path) -> Path | None:
+    """The cut-out down to as much body as its performer shows, when the photo shows clearly more (a whole-body
+    photo for a performer seen from the chest up). placed_sheet fits a cut-out to its performer's box, so a
+    whole body there drew the character's face a third the size of the performer's: SCAIL-2 took the glasses
+    and hair and kept the performer's face shape and sweater (bench/RESULTS.md). None when they already match,
+    or when either face isn't found (an animal, someone facing away)."""
+    from PIL import Image
+
+    if box[1] + box[3] < CUT_AT:  # seen down to where they stand: their whole body is wanted
+        return None
+    performer = _body_length(frame, box)
+    face = crop.find_face(cut)
+    if performer is None or not face:
+        return None
+    img = Image.open(cut).convert("RGB")
+    if (img.height - face[1]) / face[3] < performer + MORE:
+        return None
+    img.crop((0, 0, img.width, min(img.height, round(face[1] + performer * face[3])))).save(dst)
+    return Path(dst)
+
+
 def _whole_body(c: dict) -> dict:
     """The character's photo with the rest of their body drawn in (Qwen-Image-Edit), kept with their upload.
     The photo goes on a taller canvas of its own background colour first, so the body has room below."""
@@ -904,6 +934,12 @@ def run_preview(j: dict, seed: int) -> None:
                 cast = _cast_pairs(work, p, chars)
                 if cast:
                     _update(j, preview={**(j.get("preview") or {}), "cast": cast})
+            elif cut and len(boxes) == len(chars):
+                framed = _framed_like(cut, boxes[i], DATA / work["people_dir"] / "frame.png", d / f"cast_{i}_framed.png")
+                if framed:
+                    cut = framed
+                    notes.append("A character's photo shows more of their body than their performer does, so we used "
+                                 "it down to where the performer is cut off.")
             photos.append(cut or whole)
         if len(boxes) == len(photos):  # each character where their performer stands (scail.placed_sheet)
             ref = scail.placed_sheet(photos, boxes, (dv.width, dv.height), d / "reference.png", colour)
@@ -1041,14 +1077,18 @@ def run_preview(j: dict, seed: int) -> None:
         engine["scene"] = mine["text"]
     shown = _picked_frame(work, d, frame)
     auto = bool(j.get("auto"))
-    _update(j, state="queued" if auto else "awaiting_approval", error=None,
-            progress={"stage": "waiting_for_gpu", "eta_seconds": work["segments"] * 520} if auto else None,
+    whole = auto and bool(reuse) and work["segments"] == 1  # the chunk just drawn is the whole video
+    _update(j, state="finishing" if whole else "queued" if auto else "awaiting_approval", error=None,
+            progress={"stage": "finishing", "eta_seconds": 20} if whole
+            else {"stage": "waiting_for_gpu", "eta_seconds": _eta(work, 520)} if auto else None,
             _work={**work, "reference": ref.name, "edited": False, **engine, "first": reuse},
             preview={"frame_url": _url(shown), "reference_url": _url(ref), "seed": seed, "kind": kind,
                      "prompt_summary": _summary(p), "notes": notes, "seen": seen, **first,
                      # who becomes whom stays on the page until the video is done
                      **({"cast": (j.get("preview") or {}).get("cast")} if (j.get("preview") or {}).get("cast") else {})})
-    if auto:  # nothing to approve: on to the video (a one-chunk video is the chunk just drawn)
+    if whole:  # only sound and delivery are left: finished here, not queued behind other jobs' GPU work
+        run_render(j)
+    elif auto:  # nothing to approve: on to the video
         _enqueue("render", j["id"], None)
 
 
@@ -1146,6 +1186,11 @@ def _first_chunk(j: dict, work: dict, d: Path, p: dict, ref: Path) -> tuple[dict
 
 
 FIRST_SECONDS = 330  # the first chunk on the 16 GB card, measured: loading, tracking, 6 steps and what follows
+
+
+def _eta(work: dict, per_chunk: int) -> int:
+    """A whole render's time before any step is seen: per chunk at 480p, scaled for the larger sizes."""
+    return round(work["segments"] * per_chunk * graph.SLOWER.get(work.get("layout"), 1.0))
 DRESS_SECONDS = 120  # one character into the outfit, an image edit and a read of it: 166 s measured cold, less warm
 AFTER_STEPS = 75  # after the last step: decoding, tracking everyone else, putting them back as filmed
 
@@ -1201,10 +1246,10 @@ def _render_and_finish(j, work, d, p, rp, g, ref, drive, engine, steps, models) 
             if ev["status"] == "queued":
                 _update(j, state="queued", progress={"stage": "waiting_for_gpu",
                                                      "queue_position": ev.get("queue_position"),
-                                                     "eta_seconds": work["segments"] * 520})
+                                                     "eta_seconds": _eta(work, 520)})
             elif ev["status"] == "running" and clock["first"] is None:
                 _update(j, state="rendering", progress={"stage": "loading_models",
-                                                        "eta_seconds": work["segments"] * 480})
+                                                        "eta_seconds": _eta(work, 480)})
         elif ev["kind"] == "progress" and ev.get("steps") == steps and ev.get("step"):
             step = int(ev["step"])
             if step < clock["last"]:
@@ -1297,9 +1342,19 @@ def _deliver(j, work, d, p, rp, g, ref, drive, engine, models, files, job_id, t0
         return
     _update(j, state="done", progress=None, result={
         "video_url": _url(final), "compare_url": _url(compare), "share_url": _url(compare),
+        "poster_url": _url(_poster(final, d)),
         "recipe_url": _url(d / "recipe.json"), "source_url": _url(drive), "render_seconds": seconds,
         "native_resolution": f"{native[0]}×{native[1]} @ {FPS} fps", "delivered_resolution": delivered,
         "models": _model_names(engine, work)})
+
+
+def _poster(video: Path, d: Path) -> Path:
+    """The finished video's opening picture, for its card in the library (a 640 px JPEG)."""
+    dst = d / "poster.jpg"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(video), "-vf",
+                    "scale='if(gt(iw,ih),640,-2)':'if(gt(iw,ih),-2,640)'", "-frames:v", "1", "-q:v", "3", str(dst)],
+                   check=True, timeout=60)
+    return dst
 
 
 def _model_names(engine, work: dict) -> str:
@@ -1854,6 +1909,13 @@ def create_job(params: dict) -> dict:
         raise UserError(f"A new place works with up to {ELSEWHERE_MAX} people. "
                         f"Up to {scail.MAX_PEOPLE} can change in your clip's own place.")
     chars = params.get("characters") or []
+    if not isinstance(chars, list) or not all(isinstance(c, dict) for c in chars):
+        raise UserError("Add one character per performer, or none.")
+    # only what the page sends: "dressed" is the server's own note of a folder it made (a path under the data)
+    chars = [{"upload_id": c.get("upload_id", ""), "text": c.get("text") or "", "keep_outfit": c.get("keep_outfit") is True}
+             for c in chars]
+    if chars:
+        params["characters"] = chars
     if len(chars) not in (0, performers):
         raise UserError("Add one character per performer, or none.")
     for c in chars:

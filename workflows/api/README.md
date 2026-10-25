@@ -13,7 +13,7 @@ The models and custom nodes they need are listed, with sources and hashes, in
 
 | Workflow | What it does |
 |---|---|
-| [`recast_one_clip_place.json`](recast_one_clip_place.json) | Recast, one chosen performer, in the clip's own place, 5 s (one chunk). Inputs: `drive.mp4` (the clip, 16 fps, 480x832), `reference.png` (the character cut out of their photo and placed where the performer stands), `pick0.png` (the performer's mask in the first frame, white on black). Putting everyone who was not chosen back as filmed is a step after this graph (recast/composite.py). |
+| [`recast_one_clip_place.json`](recast_one_clip_place.json) | Recast, one chosen performer, in the clip's own place, 5 s (one chunk). Inputs: `drive.mp4` (the clip, 16 fps, 576x1024), `reference.png` (the character cut out of their photo and placed where the performer stands), `pick0.png` (the performer's mask in the first frame, white on black). Putting everyone who was not chosen back as filmed is a step after this graph (recast/composite.py). |
 | [`recast_duo_clip_place_10s.json`](recast_duo_clip_place_10s.json) | Recast, two chosen performers, in the clip's own place, 10 s: two chunks (9.8 s), the second anchored on the first's last 5 frames. Inputs as above, with `pick0.png` and `pick1.png`, left to right. |
 | [`recast_7s_short_last_chunk.json`](recast_7s_short_last_chunk.json) | Recast, 7 s: a whole chunk and a short last one (81 + 37 frames), so only what is asked is rendered. |
 | [`recast_another_place.json`](recast_another_place.json) | Recast into another place: SCAIL-2 animates `reference.png`, a start picture of the character already in the new place (made with `start_picture_another_place.json`). The performer is found by words. |

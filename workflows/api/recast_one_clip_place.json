@@ -266,8 +266,8 @@
     "vae",
     0
    ],
-   "width": 480,
-   "height": 832,
+   "width": 576,
+   "height": 1024,
    "length": 81,
    "batch_size": 1,
    "pose_strength": 1.0,

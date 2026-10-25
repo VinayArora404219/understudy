@@ -24,10 +24,15 @@ FPS_CHOICES = (16,)
 # media.deliver crops to it (an inexact portrait was delivered stretched by 2.6% in an earlier project).
 SIZES = {"portrait": (480, 832), "landscape": (832, 480), "square": (640, 640),
          "portrait_3x4": (576, 768), "landscape_4x3": (768, 576),
-         # 9:16 at 576x1024: 47% more pixels than 480x832, for sharper faces (being measured)
+         # 9:16 at 576x1024: 48% more pixels than 480x832 and exactly 9:16; sharper faces and hands for 1.7x
+         # the time and 14.6 GB at the peak on the 16 GB card (bench/RESULTS.md). New 9:16 and 16:9 clips use
+         # these (DEFAULT_LAYOUTS); "portrait" and "landscape" stay for the jobs and recipes made with them.
          "portrait_hd": (576, 1024), "landscape_hd": (1024, 576)}
 ASPECT = {"portrait": (9, 16), "landscape": (16, 9), "square": (1, 1),
           "portrait_3x4": (3, 4), "landscape_4x3": (4, 3), "portrait_hd": (9, 16), "landscape_hd": (16, 9)}
+DEFAULT_LAYOUTS = ("portrait_hd", "landscape_hd", "square", "portrait_3x4", "landscape_4x3")
+SLOWER = {"portrait_hd": 1.7, "landscape_hd": 1.7}  # render time against the 480p sizes, measured
+SMALLER = {"portrait_hd": "portrait", "landscape_hd": "landscape"}
 MAX_PROMPT_CHARS = 600
 
 UNET = "wan_animate_2_distill_int8_convrot.safetensors"

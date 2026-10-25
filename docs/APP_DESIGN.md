@@ -81,7 +81,7 @@ Everything is a bounded choice the server validates (`graph.RecastParams`,
 
 | Group | Parameter | Values | Default |
 |---|---|---|---|
-| Motion | clip | upload: ≤30 s, ≤200 MB, 256–4096 px, 5–120 fps; or a library id | — |
+| Motion | clip | upload: ≤30 s, ≤90 MB, 256–4096 px, 5–120 fps; or a library id | — |
 | | window start | 0 … (len − window) | 0 |
 | | window length | 5 / 10 / 15 / 20 s (1–4 segments) | 5 s |
 | | subject | person · animal | person |

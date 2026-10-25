@@ -45,6 +45,15 @@ def test_a_job_can_only_choose_people_found_at_its_start(app):
     assert c.post("/api/jobs", json=_params([1, 2])).status_code == 400  # one performer, two people
 
 
+def test_a_posted_character_keeps_only_what_the_page_sends(app):
+    """"dressed" names a folder under the data that the server reads and writes: never from a request."""
+    app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": [{"id": 1}]}}
+    sneaky = [{"upload_id": "up_face", "text": "a man in glasses", "dressed": "../../elsewhere", "keep_outfit": "yes"}]
+    r = TestClient(app.app).post("/api/jobs", json=_params([1], characters=sneaky))
+    assert r.status_code == 200
+    assert r.json()["params"]["characters"] == [{"upload_id": "up_face", "text": "a man in glasses", "keep_outfit": False}]
+
+
 def test_other_modes_ignore_a_choice(app):
     r = TestClient(app.app).post("/api/jobs", json=_params([9], mode="restyle", characters=[], style="anime"))
     assert r.status_code == 200 and "picks" not in r.json()["params"]["motion"]

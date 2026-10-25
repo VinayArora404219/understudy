@@ -150,6 +150,7 @@ export interface JobResult {
   source_url: string;
   render_seconds: number;
   native_resolution: string; // "480×832 @ 16 fps"
+  poster_url?: string; // the finished video's opening picture
   delivered_resolution: string; // "720×1248 (upscaled)"
   models?: string; // the models that made this video, e.g. "SCAIL-2 (Wan2.1 14B), SAM 3.1"
 }

@@ -26,12 +26,12 @@ def graphs() -> dict[str, tuple[str, dict]]:
     out: dict[str, tuple[str, dict]] = {}
 
     def recast(**kw) -> dict:
-        return scail.build(scail.ScailParams(drive="drive.mp4", reference="reference.png", layout="portrait",
+        return scail.build(scail.ScailParams(drive="drive.mp4", reference="reference.png", layout="portrait_hd",
                                              seed=1, prefix="recast/recast", **kw))
 
     out["recast_one_clip_place.json"] = (
         "Recast, one chosen performer, in the clip's own place, 5 s (one chunk). Inputs: `drive.mp4` (the clip, "
-        "16 fps, 480x832), `reference.png` (the character cut out of their photo and placed where the performer "
+        "16 fps, 576x1024), `reference.png` (the character cut out of their photo and placed where the performer "
         "stands), `pick0.png` (the performer's mask in the first frame, white on black). Putting everyone who was "
         "not chosen back as filmed is a step after this graph (recast/composite.py).",
         recast(prompt=scail.prompt([SHE], [], replace=True), track="person", people=1, replace=True,
