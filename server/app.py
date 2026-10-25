@@ -144,8 +144,11 @@ def _inputs(p: dict) -> list[dict]:
     add((p.get("motion") or {}).get("upload_id"), "Motion")
     chars = p.get("characters") or []
     for i, c in enumerate(chars):
-        add(c.get("upload_id"), ("Left" if i == 0 else "Right") if len(chars) == 2 else "Character")
-    add((p.get("outfit") or {}).get("upload_id"), "Outfit")
+        add(c.get("upload_id"), ("Left" if i == 0 else "Right") if len(chars) == 2
+            else f"Character {i + 1}" if len(chars) > 2 else "Character")
+    worn = [o for o in _outfits(p) if o] or ([p["outfit"]] if p.get("outfit") else [])
+    for i, o in enumerate(worn):
+        add(o.get("upload_id"), "Outfit" if len(worn) == 1 else f"Outfit {i + 1}")
     add((p.get("prop") or {}).get("upload_id"), "Product")
     add((p.get("place") or {}).get("upload_id"), "Place")
     return found
@@ -353,11 +356,23 @@ def _lower_article(text: str) -> str:
 def _summary(p: dict) -> str:
     parts = []
     chars = [{**c, "text": _lower_article(c["text"])} for c in _characters(p)]
-    if p.get("outfit") and not chars:
-        return f"The performer stays themselves, now wearing {p['outfit']['text'].strip()}; everything else as filmed."
+    if _mode(p) == "swap":
+        outfits = _outfits(p)
+        where = ["on the left", "on the right"] if len(outfits) == 2 else \
+            [f"{scail.ORDINALS[i].lower()} from the left" for i in range(len(outfits))] if len(outfits) > 2 else [""]
+        said = [f"the performer{' ' + w if w else ''} now wears {o['text'].strip()}"
+                for o, w in zip(outfits, where) if o]
+        mode = p["place"]["mode"]
+        said.append("everything else as filmed" if mode == "keep" else
+                    f"in the place you described: {p['place'].get('text', '').strip()}" if mode == "describe"
+                    else "in the place from your image")
+        text = "; ".join(said)
+        return text[0].upper() + text[1:] + "."
     if p.get("prop"):
         return (f"The performer stays themselves, now holding {p['prop']['text'].strip()}; everything else as filmed.")
-    if len(chars) == 2:
+    if len(chars) > 2:
+        parts.append("From the left, the performers become " + "; ".join(c["text"].strip() for c in chars))
+    elif len(chars) == 2:
         parts.append(f"The performer on the left becomes {chars[0]['text'].strip()} and the one on the right "
                      f"becomes {chars[1]['text'].strip()}")
     elif chars:
@@ -403,12 +418,13 @@ def _comfy(lane: str | None = None):
 
 
 def _lane_of(kind: str, jid: str) -> str:
-    """Renders, and previews that are a render's first chunk (Recast in the clip's place), need the big GPU."""
+    """Renders, and previews that are a render's first chunk (Recast and Restage in the clip's place), need
+    the big GPU."""
     if kind == "render":
         return "heavy"
     if kind == "preview":
         p = (JOBS.get(jid) or {}).get("params") or {}
-        return "heavy" if _mode(p) == "recast" and (p.get("place") or {}).get("mode") == "keep" else "quick"
+        return "heavy" if _mode(p) in ("recast", "swap") and (p.get("place") or {}).get("mode") == "keep" else "quick"
     return "quick"
 
 
@@ -547,25 +563,22 @@ def _photo_of(c: dict) -> Path:
     return _home_of(c) / "dressed.png" if c.get("dressed") else _upload_path(c["upload_id"], "image")
 
 
-def _dressed(c: dict, outfit: dict) -> dict:
-    """The character wearing the outfit (Recast + outfit): their own photo dressed by Qwen-Image-Edit, then their
-    words read again from that photo, so the render's prompt and its reference picture agree. Kept per
-    character and outfit, so another version and the render reuse it."""
+def _dress(photo: Path, outfit: dict, home: Path, *, subject: str, tag: str, fallback: str) -> tuple[Path, str]:
+    """`photo` in the outfit (Qwen-Image-Edit), and words read again from the result (Qwen3-VL), so a render's
+    prompt and its reference picture agree. Kept in `home`: another version and the render reuse it.
+    Returns (dressed picture, words); the words fall back to `fallback` if the reader fails."""
     from recast import runner
 
-    src = _upload_path(c["upload_id"], "image")
     item = _upload_path(outfit["upload_id"], "image") if outfit.get("upload_id") else None
     text = outfit["text"].strip()
-    key = hashlib.sha256(json.dumps([text, outfit.get("upload_id") or ""]).encode()).hexdigest()[:12]
-    home = src.parent / f"dressed_{key}"
     done = home / "dressed.json"
     if not done.exists():
-        home.mkdir(exist_ok=True)
-        photo = media.clean_image(src, home / "photo.png")
+        home.mkdir(parents=True, exist_ok=True)
+        photo = media.clean_image(photo, home / "photo.png")
         worn = media.clean_image(item, home / "outfit.png") if item else None
         mp = reflib.MatchParams(frame=photo.name, base="frame", outfit=worn and worn.name, outfit_text=text,
-                                subject=reflib.cast_word([c["text"]]), cutout_colour=media.edge_colour(photo),
-                                seed=1, prefix=f"recast/dress_{c['upload_id']}_{key}")
+                                subject=subject, cutout_colour=media.edge_colour(photo), seed=1,
+                                prefix=f"recast/dress_{tag}")
         try:
             mp.validate()
         except reflib.ReferenceError as e:
@@ -579,21 +592,33 @@ def _dressed(c: dict, outfit: dict) -> dict:
             files = runner.download(runner.follow(runner.submit_graph(client, make, home / "edit_submission.json")),
                                     home / "edit", node_id=reflib.FINAL_NODE)
             if not files:
-                raise RuntimeError("dressing the character finished without an image")
+                raise RuntimeError("dressing finished without an image")
             dressed = media.clean_image(files[0], home / "dressed.png")
             try:
                 gjob = runner.submit_graph(
                     client, lambda: describe.build_role(client.assets.from_file(dressed), "character",
-                                                        prefix=f"recast/dress_{c['upload_id']}_{key}_words"),
+                                                        prefix=f"recast/dress_{tag}_words"),
                     home / "describe_submission.json")
                 out = runner.download(runner.follow(gjob), home / "describe", node_id=describe.FINAL_NODE)
                 words = describe.parse_role(out[0].read_text(), "character") if out else ""
-            except Exception:  # their own words plus the outfit still say it
-                log.exception("describing the dressed character %s failed", c["upload_id"])
+            except Exception:  # the words given plus the outfit still say it
+                log.exception("describing the dressed picture in %s failed", home)
                 words = ""
-        _write_json(done, {"text": words or f"{c['text'].strip().rstrip('.')}, wearing {text}", "outfit": text})
-    return {**c, "dressed": str(home.relative_to(DATA)), "text": json.loads(done.read_text())["text"],
-            "keep_outfit": True}
+        _write_json(done, {"text": words or f"{fallback.strip().rstrip('.')}, wearing {text}", "outfit": text})
+    return home / "dressed.png", json.loads(done.read_text())["text"]
+
+
+def _outfit_key(outfit: dict) -> str:
+    return hashlib.sha256(json.dumps([outfit["text"].strip(), outfit.get("upload_id") or ""]).encode()).hexdigest()[:12]
+
+
+def _dressed(c: dict, outfit: dict) -> dict:
+    """A Recast character wearing the outfit: their own photo dressed (_dress), kept with their upload."""
+    src = _upload_path(c["upload_id"], "image")
+    home = src.parent / f"dressed_{_outfit_key(outfit)}"
+    _, words = _dress(src, outfit, home, subject=reflib.cast_word([c["text"]]),
+                      tag=f"{c['upload_id']}_{home.name}", fallback=c["text"])
+    return {**c, "dressed": str(home.relative_to(DATA)), "text": words, "keep_outfit": True}
 
 
 def _cut_out(c: dict, photo: Path, dst: Path, colour: int) -> Path | None:
@@ -672,9 +697,10 @@ def run_preview(j: dict, seed: int) -> None:
     poses, shots, bodies, side = ["", ""], ["", ""], ["", ""], ""
     found: list[describe.Performer] = []
     seen = ""
-    item = p.get("outfit") or p.get("prop")
-    hand = other_hand = ""
     swap = _mode(p) == "swap"
+    outfits = _outfits(p)
+    item = (any(outfits) if swap else p.get("outfit")) or p.get("prop")
+    hand = other_hand = ""
     if chars or item or swap:  # a character, an item or a swap needs the clip read in words; a restyle keeps it
         try:
             found = _read_clip(j, work, _chosen_frame(work, d, frame))
@@ -733,19 +759,19 @@ def run_preview(j: dict, seed: int) -> None:
             lower = ""
         work = j["_work"]
         with_lower = f", with {lower}" if lower else ""
-        who = [f.what or f.kind for f in found][:2] or ["the person"]
-        if work.get("picks"):  # one description per chosen person, so the prompt matches who is tracked
-            who = (who + ["the person"] * 2)[:len(work["picks"])]
-        if p.get("outfit"):
-            engine = {"engine": "scail", "replace": True, "people": 1, "poses": [],
-                      "track": scail.track_words([f.find or f.what for f in found][:1], "person"),
-                      "texts": [f"the same person as in the video, now wearing {p['outfit']['text'].strip()}"
-                                f"{with_lower}"]}
-        else:
-            engine = {"engine": "scail", "replace": False, "people": len(work.get("picks") or who),
-                      "poses": bodies[:len(who)],
-                      "track": scail.track_words([f.find or f.what for f in found][:2], p["subject"]),
-                      "texts": [who[0] + with_lower, *who[1:]]}
+        n = len(work.get("picks") or []) or max(1, min(len(found), ELSEWHERE_MAX))
+        who = ([f.what or f.kind for f in found] + ["the person"] * n)[:n]  # one per person, as tracked
+        outfits = (list(outfits) + [None] * n)[:n]
+        texts = [f"{w}, now wearing {o['text'].strip()}{with_lower}" if o else w + with_lower
+                 for w, o in zip(who, outfits)]
+        track = scail.track_words([f.find or f.what for f in found][:n], p["subject"])
+        if p["place"]["mode"] == "keep":  # in the clip's place: each of them, dressed, cut out (below)
+            if not work.get("picks") or not work.get("people_dir"):
+                raise UserError("Choose who gets new clothes in your first frame.")
+            engine = {"engine": "scail", "replace": True, "people": n, "poses": [], "track": track, "texts": texts}
+        else:  # a new place: one edit dresses them and moves the scene; the video animates that picture
+            engine = {"engine": "scail", "replace": False, "people": n, "poses": bodies[:n], "track": track,
+                      "texts": texts}
     elif _mode(p) == "restyle":  # video to video: every frame's depth, so later objects and motion survive
         mine = j.get("scene") or {}
         if mine.get("edited"):  # the visitor's own words win over a re-read
@@ -777,6 +803,35 @@ def run_preview(j: dict, seed: int) -> None:
         else:
             ref = scail.reference_sheet(photos, d / "reference.png")
         kind = "cast"
+    elif swap and engine.get("replace"):  # Restage in the clip's place: themselves, cut out, in their new clothes
+        src = DATA / work["people_dir"]
+        chosen = sorted((f for f in people.load(src) if f.id in p["motion"]["picks"]), key=lambda f: f.cx)
+        colour = media.edge_colour(frame)
+        photos, texts = [], list(engine["texts"])
+        if any(outfits):
+            _update(j, progress={"stage": "dressing",
+                                 "eta_seconds": FIRST_SECONDS + 60 + DRESS_SECONDS * sum(1 for o in outfits if o)})
+        for i, (f, o) in enumerate(zip(chosen, outfits)):
+            self_ = people.cut_out(src / "frame.png", [f], src, d / f"self_{i}.png", colour) or frame
+            if o:
+                pic, words = _dress(self_, o, d / f"dressed_{i}_{_outfit_key(o)}", subject=p["subject"],
+                                    tag=f"{j['id']}_{i}", fallback=f"the same {who[i]} as in the video")
+                photos.append(pic)
+                texts[i] = words + (f", with {lower}" if lower else "")
+            else:
+                photos.append(self_)
+            if _cancelled(j):
+                return
+        engine["texts"] = texts
+        dv = media.probe(d / work["drive"])
+        ref = scail.placed_sheet(photos, [f.box for f in chosen], (dv.width, dv.height), d / "reference.png", colour)
+        _update(j, progress={"stage": "starting_gpu", "eta_seconds": FIRST_SECONDS + 60},
+                preview={"kind": "cast", "pending": True, "seed": seed, "prompt_summary": _summary(p),
+                         "frame_url": _url(_picked_frame(work, d, frame)),
+                         "cast": [{"person": f.id, "box": list(f.box), "frame_url": _url(src / "frame.png"),
+                                   "character_url": _url(ph), "text": t}
+                                  for f, ph, t in zip(chosen, photos, texts)]})
+        kind = "cast"
     elif engine and p["place"]["mode"] == "character" and len(chars) == 1:  # their photo, as it is, is the start
         src = media.clean_image(_photo_of(chars[0]), d / "character_full.png")
         ref = crop.to_shape(src, d / "reference.png", work["layout"])
@@ -803,11 +858,18 @@ def run_preview(j: dict, seed: int) -> None:
                                  + ", so all of it was used. If the preview copies that picture's pose, "
                                    "try a head-and-shoulders picture.")
             images[slot] = _named(media.clean_image(img, d / f"{slot}.png"), slot)
-        for slot in ("outfit", "prop"):
-            if p.get(slot) and not dress:  # a recast's outfit is already on the characters
-                src = _upload_path(p[slot]["upload_id"], "image")
-                name = "product" if slot == "prop" else slot
-                images[name] = _named(media.clean_image(src, d / f"{name}.png"), name)
+        if p.get("prop"):
+            images["product"] = _named(media.clean_image(_upload_path(p["prop"]["upload_id"], "image"),
+                                                         d / "product.png"), "product")
+        worn: dict[str, Any] = {}  # Restage in a new place: each outfit, by the side of the frame its wearer is on
+        if swap:
+            dressed = [(o, side) for o, side in zip(outfits, ["left", "right"] if len(outfits) == 2 else [""]) if o]
+            for slot, (o, side) in zip(("outfit", "outfit2"), dressed):
+                worn[f"{slot}_text"] = o["text"].strip()
+                if o.get("upload_id"):
+                    images[slot] = _named(media.clean_image(_upload_path(o["upload_id"], "image"), d / f"{slot}.png"), slot)
+            if dressed and len(outfits) == 2:
+                worn["outfit_side"] = dressed[0][1]
         if mode == "image":
             src = media.clean_image(_upload_path(p["place"]["upload_id"], "image"), d / "location_full.png")
             loc = crop.to_shape(src, d / "location.png", work["layout"]) if base == "location" else src
@@ -824,7 +886,7 @@ def run_preview(j: dict, seed: int) -> None:
             side=side if base != "frame" else "", shot=shots[0] if base != "frame" else "",
             shot2=shots[1] if base != "frame" else "",
             cutout_colour=media.edge_colour(room) if mode in ("keep", "image", "character") else reflib.CUTOUT_GREY,
-            outfit_text="" if dress else (p.get("outfit") or {}).get("text", ""), product_text=(p.get("prop") or {}).get("text", ""),
+            product_text=(p.get("prop") or {}).get("text", ""), **worn,
             product_hand=hand if p.get("prop") else "", other_hand=other_hand if p.get("prop") and hand else "",
             style=p.get("style") or "", scene=scene, background=background,
             subject=p["subject"] if base == "frame" else reflib.cast_word([c["text"] for c in chars]),
@@ -1485,11 +1547,18 @@ def files(path: str):
     return FileResponse(p)
 
 
+def _restage_title(p: dict) -> str:
+    dressed = sum(1 for o in _outfits(p) if o)
+    parts = (["New outfit" if dressed == 1 else "New outfits"] if dressed else []) \
+        + (["new place" if dressed else "New place"] if p["place"]["mode"] != "keep" else [])
+    return ", ".join(parts) or "Restage"
+
+
 def _title(p: dict) -> str:
     chars = _characters(p)
-    what = (("Duo recast" if len(chars) == 2 else "Recast") + (", new outfit" if p.get("outfit") else "") if chars
+    what = (("Duo recast" if len(chars) == 2 else f"Recast of {len(chars)}" if len(chars) > 2 else "Recast") + (", new outfit" if p.get("outfit") else "") if chars
             else styles.get(p["style"]).name if p.get("style")
-            else "New outfit" if p.get("outfit") else "New place")
+            else _restage_title(p))
     return f"{what} · {p['motion']['length']} s"
 
 
@@ -1509,22 +1578,52 @@ def _check_mode(params: dict, chars: list, place: dict, performers: int) -> None
             raise UserError("Pick a look.")
         if chars or items or place["mode"] != "keep":
             raise UserError("Restyle changes only the look. Use Recast or Restage for the rest.")
-    elif mode == "swap":  # shown as "Restage": you stay you, with a new outfit or in a new place
+    elif mode == "swap":  # shown as "Restage": you stay you, in new clothes, in a new place, or both
         if params.get("prop"):  # measured: a held product showed only while its hand stayed in view
             raise UserError("Products in hand aren't offered: change the outfit or the place.")
         if chars or params.get("style"):
-            raise UserError("Restage keeps the performer and the look; it changes one thing.")
-        changes = len(items) + (place["mode"] != "keep")
-        if changes != 1:
-            raise UserError("Change one thing at a time: the outfit or the place.")
+            raise UserError("Restage keeps the performers and the look: it changes their clothes or the place.")
         if place["mode"] == "character":
             raise UserError("“Where my character is” belongs to Recast.")
-        if items and (performers != 1 or params.get("subject") != "person"):
-            raise UserError("A new outfit needs one person in the clip.")
-        if params.get("outfit"):
-            _check_outfit(params["outfit"], image_needed=True)
+        if params.get("outfit") and params.get("outfits") is None:  # one outfit, as the API took it before
+            params["outfits"] = [params.pop("outfit")]
+        outfits = params.get("outfits") or []
+        if not isinstance(outfits, list) or len(outfits) > scail.MAX_PEOPLE:
+            raise UserError("One outfit, or none, for each person chosen.")
+        for o in outfits:
+            if o is not None:
+                if not isinstance(o, dict):
+                    raise UserError("One outfit, or none, for each person chosen.")
+                _check_outfit(o, image_needed=False)
+        if not any(outfits) and place["mode"] == "keep":
+            raise UserError("Give someone new clothes, or pick a new place.")
     else:
         raise UserError("Pick Recast, Restyle or Restage.")
+
+
+def _check_restage(params: dict, performers: int) -> None:
+    """Restage once its people are known: an outfit slot for each, and what fits in one image edit."""
+    if params.get("mode") != "swap":
+        return
+    outfits = params.get("outfits") or []
+    if outfits and len(outfits) != performers:
+        raise UserError("One outfit, or none, for each person chosen.")
+    place = params.get("place") or {"mode": "keep"}
+    if place["mode"] != "keep":
+        # a new place is one edit of the whole first frame: the frame plus two pictures at most
+        pictures = sum(1 for o in outfits if o and o.get("upload_id")) + (place["mode"] == "image")
+        if pictures > 2:
+            raise UserError("Two outfit pictures and a place picture don't fit together. Describe the place, "
+                            "or one of the outfits, in words.")
+
+
+def _outfits(p: dict) -> list[dict | None]:
+    """Restage: an outfit or None for each chosen person, left to right. Jobs from before had one `outfit`."""
+    if _mode(p) != "swap":
+        return []
+    if p.get("outfits") is not None:
+        return p["outfits"]
+    return [p["outfit"]] if p.get("outfit") else []
 
 
 def _check_outfit(outfit: dict, *, image_needed: bool) -> None:
@@ -1535,6 +1634,7 @@ def _check_outfit(outfit: dict, *, image_needed: bool) -> None:
         raise UserError("Say what the outfit is in a few words.")
 
 
+ELSEWHERE_MAX = 2  # people in a new place: its start picture is one image edit, with room for two characters
 CLEAR = 0.25  # of the biggest person's area: smaller is a passer-by or a ball, never chosen for the visitor
 
 
@@ -1546,6 +1646,9 @@ def _swap_picks(params: dict, performers: int) -> int:
     m = params["motion"]
     if params.get("mode") != "swap" or not m.get("upload_id") or m.get("upload_id") not in UPLOADS:
         return performers
+    if isinstance(m.get("picks"), list) and m["picks"]:  # chosen by the visitor
+        params["performers"] = len(m["picks"])
+        return len(m["picks"])
     layout, _ = _clip_layout(m["upload_id"], params.get("shape"))
     entry = (UPLOADS[m["upload_id"]].get("people") or {}).get(_people_key(m.get("start", 0), layout)) or {}
     found = entry.get("people") or [] if entry.get("state") == "ready" else []
@@ -1554,7 +1657,7 @@ def _swap_picks(params: dict, performers: int) -> int:
         return performers
     biggest = max(found, key=lambda x: x["area"])
     clear = [x for x in found if x["area"] >= CLEAR * biggest["area"]]
-    chosen = [biggest] if params.get("outfit") or len(clear) > 2 else clear
+    chosen = [biggest] if params.get("outfits") or len(clear) > 2 else clear
     m["picks"] = sorted(x["id"] for x in chosen)
     params["performers"] = len(chosen)
     return len(chosen)
@@ -1572,7 +1675,7 @@ def _check_picks(params: dict, performers: int) -> None:
     if (not isinstance(picks, list) or len(picks) != performers or len(set(picks)) != len(picks)
             or not all(isinstance(x, int) for x in picks)):
         raise UserError("Choose one person in your clip for each performer." if performers == 1
-                        else "Choose two different people in your clip, one for each performer.")
+                        else f"Choose {performers} different people in your clip, one for each performer.")
     layout, _ = _clip_layout(m["upload_id"], params.get("shape"))
     entry = (UPLOADS[m["upload_id"]].get("people") or {}).get(_people_key(m.get("start", 0), layout)) or {}
     if entry.get("state") != "ready" or not set(picks) <= {x["id"] for x in entry.get("people", [])}:
@@ -1597,8 +1700,12 @@ def create_job(params: dict) -> dict:
     if params.get("subject") not in ("person", "animal"):
         raise UserError("Say whether the performer is a person or an animal.")
     performers = params.get("performers", 1)
-    if performers not in (1, 2):
-        raise UserError("Up to two performers for now.")
+    if not isinstance(performers, int) or not 1 <= performers <= scail.MAX_PEOPLE:
+        raise UserError(f"Up to {scail.MAX_PEOPLE} performers.")
+    if performers > ELSEWHERE_MAX and (params.get("place") or {}).get("mode", "keep") != "keep":
+        # another place starts from one picture made by an image edit, which holds two characters at most
+        raise UserError(f"A new place works with up to {ELSEWHERE_MAX} people. "
+                        f"Up to {scail.MAX_PEOPLE} can change in your clip's own place.")
     chars = params.get("characters") or []
     if len(chars) not in (0, performers):
         raise UserError("Add one character per performer, or none.")
@@ -1606,9 +1713,9 @@ def create_job(params: dict) -> dict:
         _upload_path(c.get("upload_id", ""), "image")
         if len((c.get("text") or "").strip()) < 3:
             raise UserError("Describe each character in a few words.")
-    if len(chars) == 2 and chars[0]["text"].strip().lower() == chars[1]["text"].strip().lower():
+    if len({c["text"].strip().lower() for c in chars}) < len(chars):
         # measured: identity follows the words, so two identical descriptions give two copies of one person
-        raise UserError("Both characters have the same description, so they would come out alike. "
+        raise UserError("Two characters have the same description, so they would come out alike. "
                         "Describe each one as they look.")
     if params.get("style") and params["style"] not in styles.STYLES:
         raise UserError("That look doesn't exist.")
@@ -1622,6 +1729,7 @@ def create_job(params: dict) -> dict:
     _check_mode(params, chars, place, performers)
     performers = _swap_picks(params, performers)
     _check_picks(params, performers)
+    _check_restage(params, performers)
     if (params.get("shape") or "auto") not in ("auto", *graph.SIZES):
         raise UserError("Unknown shape.")
     if params.get("finish") not in ("480p", "720p", "1080p") or params.get("audio") not in ("original", "mute"):

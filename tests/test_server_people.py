@@ -174,6 +174,8 @@ def test_quick_work_never_waits_behind_a_render(app, monkeypatch):
     assert app._lane_of("render", place) == "heavy"
     assert app._lane_of("preview", keep) == "heavy"  # the clip's place previews with a real render
     assert app._lane_of("preview", place) == "quick"  # a picture from the image editor
+    restage = c.post("/api/jobs", json=_params([1], mode="swap", characters=[], outfits=[{"text": "a red jacket"}])).json()
+    assert app._lane_of("preview", restage["id"]) == "heavy"  # Restage in the clip's place previews with a render too
     assert app._lane_of("find_people", "up_clip") == app._lane_of("describe_upload", "up_face") == "quick"
     monkeypatch.setenv("COMFY_BASE_URL", "http://big:1")
     monkeypatch.delenv("COMFY_QUICK_BASE_URL", raising=False)

@@ -52,7 +52,7 @@ def test_sizes_are_multiples_of_32():
         assert w % 32 == 0 and h % 32 == 0
 
 
-@pytest.mark.parametrize("bad", [dict(chunks=0), dict(chunks=5), dict(people=3), dict(prompt=" "),
+@pytest.mark.parametrize("bad", [dict(chunks=0), dict(chunks=5), dict(people=5), dict(people=0), dict(prompt=" "),
                                  dict(track=""), dict(layout="cinema")])
 def test_bad_params_are_refused(bad):
     with pytest.raises(scail.ScailError):
@@ -159,3 +159,11 @@ def test_any_length_renders_whole_chunks_then_a_short_last_one():
     assert g["c1_masks"]["inputs"]["length"] == 33 and g["clip_frames"]["inputs"]["length"] == 76 + 33
     with pytest.raises(scail.ScailError):
         scail.build(scail.ScailParams(**{**p.__dict__, "chunks": 3}))
+
+
+def test_up_to_four_people_are_named_from_the_left():
+    text = scail.prompt(["a chef", "an astronaut", "a runner", "a grandpa"], [], replace=True)
+    assert text.startswith("First from the left, a chef. Second from the left, an astronaut. Third from the left")
+    assert scail.prompt(["a chef", "a runner"], [], replace=True).startswith("On the left, a chef. On the right")
+    g = scail.build(_p(people=4, picks=["p0.png", "p1.png", "p2.png", "p3.png"]))
+    assert g["track"]["inputs"]["max_objects"] == 4 and g["ref_track"]["inputs"]["max_objects"] == 4

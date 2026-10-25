@@ -82,11 +82,13 @@ export interface JobParams {
   mode: Mode;
   /** picks: Recast's chosen people (Person.id) in the start frame; they set `performers`. */
   motion: { upload_id?: string; preset_id?: string; start: number; length: number; picks?: number[] }; // seconds, 2..20
-  performers: 1 | 2; // who is replaced (Recast) or in the clip
+  performers: number; // who is replaced (Recast) or in the clip: 1 to 4, or up to 2 in a new place
   subject: "person" | "animal"; // with picks, the server reads it from the clip
   /** One per performer, or none. With two performers: [the one on the picture's left, the one on its right]. */
   characters: CharacterRef[];
-  outfit?: { upload_id?: string; text: string }; // the picture is optional in Recast, required in Restage
+  outfit?: { upload_id?: string; text: string }; // jobs made before Restage took one outfit per person
+  /** Restage: what each chosen person now wears, left to right; null keeps their own clothes. */
+  outfits?: ({ upload_id?: string; text: string } | null)[];
   style?: string;
   place: { mode: PlaceMode; text?: string; upload_id?: string };
   finish: "480p" | "720p" | "1080p";

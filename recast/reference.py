@@ -90,6 +90,9 @@ class MatchParams:
     pose2: str = ""  # the same for the performer on the right
     outfit: Any = None  # a garment the performer now wears (Restage), or a character (Recast + outfit)
     outfit_text: str = ""  # what it is; on its own, without an image, the outfit is these words
+    outfit_side: str = ""  # with two people in the picture: "left" | "right", who wears `outfit`
+    outfit2: Any = None  # with two people: what the one on the right wears (then `outfit` is the left one's)
+    outfit2_text: str = ""
     product: Any = None  # swap: an object the performer now holds
     product_text: str = ""
     product_hand: str = ""  # "left" | "right": the side of the picture of the hand that stays in view
@@ -155,6 +158,12 @@ class MatchParams:
             raise ReferenceError("an outfit or product swap keeps the performer: it can't be combined with a character")
         if self.outfit is not None and self.product is not None:
             raise ReferenceError("swap one thing at a time: an outfit or a product")
+        if self.outfit_side not in ("", "left", "right"):
+            raise ReferenceError("outfit_side must be left or right")
+        if (self.outfit2 is not None or self.outfit2_text.strip()) and self.outfit_side != "left":
+            raise ReferenceError("a second outfit is the right person's: the first must be the left one's")
+        if self.outfit2 is not None and not self.outfit2_text.strip():
+            raise ReferenceError("describe the second outfit")
         for img, text, name in ((self.outfit, self.outfit_text, "outfit"), (self.product, self.product_text, "product")):
             if img is not None and not text.strip():
                 raise ReferenceError(f"describe the {name}")
@@ -163,7 +172,7 @@ class MatchParams:
         if self.product_hand not in ("", "left", "right"):
             raise ReferenceError("product_hand must be 'left' or 'right'")
         if len(slots(self)) > 2:
-            raise ReferenceError("two characters and a place image don't fit in one edit: drop the place image")
+            raise ReferenceError("more than two pictures besides the first don't fit in one edit: describe one in words")
         if self.scene == "new" and self.location is None and not self.background.strip():
             raise ReferenceError("describe the new background or give a location image")
         if (self.character is None and self.location is None and self.outfit is None and self.product is None
@@ -171,7 +180,8 @@ class MatchParams:
             raise ReferenceError("nothing to change: give a character, a location, a style or a new background")
         if self.props.strip() and self.base == "frame":
             raise ReferenceError("props are for another place: the clip's own frame already has them")
-        for name in ("character_text", "character2_text", "pose", "pose2", "props", "outfit_text", "product_text", "other_hand",
+        for name in ("character_text", "character2_text", "pose", "pose2", "props", "outfit_text", "outfit2_text",
+                     "product_text", "other_hand",
                      "background"):
             if len(getattr(self, name)) > MAX_TEXT:
                 raise ReferenceError(f"{name} is over {MAX_TEXT} characters")
@@ -191,7 +201,7 @@ def base_image(p: MatchParams) -> Any:
 def slots(p: MatchParams) -> dict[str, int]:
     """Which image slot each content-only input occupies (image1 is the base)."""
     out, n = {}, 2
-    for name in ("character", "character2", "outfit", "product", "location"):
+    for name in ("character", "character2", "outfit", "outfit2", "product", "location"):
         if getattr(p, name) is not None and name != p.base:
             out[name] = n
             n += 1
@@ -275,11 +285,16 @@ def prompt_for(p: MatchParams) -> str:
                      f"only for its look, not its pose.")
         if p.pose.strip():  # fix A: concrete pose words beat the abstract instruction above
             parts.append(f"The character {_clause(p.pose)}.")
-    if "outfit" in sl:
-        parts.append(f"The {p.subject} in the first picture now wears the {_noun(p.outfit_text)} shown in the "
-                     f"{ORDINAL[sl['outfit']]} picture, fitted to their body.")
-    elif p.outfit_text.strip():  # the outfit in words only (Recast + outfit, typed)
-        parts.append(f"The {p.subject} in the first picture now wears {_clause(p.outfit_text)}, fitted to their body.")
+    # each wearer by their side of the picture when two people are in it (never their own left or right)
+    for slot, text, side in (("outfit", p.outfit_text, p.outfit_side), ("outfit2", p.outfit2_text, "right")):
+        if slot == "outfit2" and not (p.outfit2 is not None or text.strip()):
+            continue
+        who = f"The {p.subject} on the {side} of the first picture" if side else f"The {p.subject} in the first picture"
+        if slot in sl:
+            parts.append(f"{who} now wears the {_noun(text)} shown in the {ORDINAL[sl[slot]]} picture, fitted to "
+                         f"their body.")
+        elif text.strip():  # the outfit in words only
+            parts.append(f"{who} now wears {_clause(text)}, fitted to their body.")
     if "product" in sl:
         # Measured (V5b): the product goes in the hand the performer keeps in view, placed by the
         # side of the picture; elsewhere it vanishes once its hand leaves the frame.

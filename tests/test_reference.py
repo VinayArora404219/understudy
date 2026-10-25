@@ -286,3 +286,13 @@ def test_an_outfit_in_words_dresses_the_first_picture():
     p.validate()
     text = r.prompt_for(p)
     assert "now wears matching silver sequin jackets" in text and "Same pose, same camera" in text
+
+
+def test_two_people_each_get_their_own_outfit_by_side():
+    p = ref.MatchParams(frame="f.png", outfit="jacket.png", outfit_text="a red leather jacket", outfit_side="left",
+                              outfit2_text="a blue suit")
+    text = ref.prompt_for(p)
+    assert "The person on the left of the first picture now wears the red leather jacket shown in the second" in text
+    assert "The person on the right of the first picture now wears a blue suit, fitted" in text
+    with pytest.raises(ref.ReferenceError):  # a second outfit always belongs to the right one
+        ref.MatchParams(frame="f.png", outfit_text="a hat", outfit2_text="a suit").validate()

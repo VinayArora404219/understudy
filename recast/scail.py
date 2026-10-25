@@ -36,6 +36,9 @@ STRIDE = CHUNK - OVERLAP
 STEPS = 6  # with the lightx2v distill LoRA, cfg 1 (the blueprint's fast setting)
 MAX_CHUNKS = 4
 MAX_TEXT = 1200
+# People recast in one clip. SCAIL-2 tells identities apart by mask colour and was trained on a palette of six
+# (comfy_extras/nodes_scail.py); we offer four, so each still has some of the 480p frame for a face.
+MAX_PEOPLE = 4
 
 
 MODELS = [  # for recipe.json: every weight file in the graph, with its source and terms
@@ -95,8 +98,8 @@ class ScailParams:
             raise ScailError(f"chunks must be 1..{MAX_CHUNKS}")
         if self.frames and len(lengths_for(self.frames)) != self.chunks:
             raise ScailError(f"{self.frames} frames don't make {self.chunks} chunks")
-        if self.people not in (1, 2):
-            raise ScailError("one or two people")
+        if not 1 <= self.people <= MAX_PEOPLE:
+            raise ScailError(f"1 to {MAX_PEOPLE} people")
         if not self.prompt.strip() or len(self.prompt) > MAX_TEXT:
             raise ScailError(f"the prompt must be 1..{MAX_TEXT} characters")
         if self.picks is not None and len(self.picks) != self.people:
@@ -270,9 +273,13 @@ def track_words(whats: list[str], subject: str) -> str:
     return ", ".join(words) if words else ("person" if subject == "person" else "animal")
 
 
+ORDINALS = ["First", "Second", "Third", "Fourth"]
+
+
 def prompt(texts: list[str], poses: list[str], *, replace: bool, place: str = "") -> str:
     """SCAIL-2 is trained on long, detailed prompts: who is where, what each body does, and the place."""
-    sides = ["On the left", "On the right"] if len(texts) == 2 else ["In the frame"]
+    sides = (["On the left", "On the right"] if len(texts) == 2 else ["In the frame"] if len(texts) == 1
+             else [f"{ORDINALS[i]} from the left" for i in range(len(texts))])
     lines = []
     for side, text, pose in zip(sides, texts, poses + [""] * len(texts)):
         line = f"{side}, {describe.drop_negations(text.strip().rstrip('.'))}"

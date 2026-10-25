@@ -126,7 +126,8 @@ ROLE_PROMPTS = {
     # frame often doesn't show it (a selfie start). Without these words the render invented trousers.
     "lower": ("This picture shows four moments of one video, in a 2x2 grid. In at most 10 words, name what the "
               "main person wears below the waist and on their feet, with colours, such as \"blue jeans and white "
-              "trainers\". Only what you can see. No brand names, no left or right. Reply with the words only."),
+              "trainers\". Only what you can see. No brand names, no left or right. Reply with the words only. If "
+              "nothing below the waist is in view, reply: none"),
 }
 ROLE_WORDS = {"character": 30, "outfit": 12, "product": 12, "scene": 65, "lower": 12}
 MAX_SCENE = 500  # characters a visitor may write when they correct the scene line
@@ -190,12 +191,18 @@ def drop_negations(text: str) -> str:
     return ", ".join(c for c in parts if c and not _NEGATION.match(c))
 
 
+# A reply about the picture instead of clothes: what is below the waist isn't in view.
+NOT_SEEN = re.compile(r"(?i)^none$|\b(image|picture|photo|frame|visible|in view|upper body|cannot|can't|unable)\b")
+
+
 def parse_role(text: str, role: str) -> str:
     """One clean line: no quotes or labels, no sides, nothing said to be absent, no more words than the role
     allows."""
     line = next((ln for ln in text.strip().splitlines() if ln.strip()), "")
     line = re.sub(r"^\s*(description|answer|outfit|product|character|scene)\s*:\s*", "", line, flags=re.I)
     line = line.strip().strip('"\'`*').rstrip(".")
+    if role == "lower" and NOT_SEEN.search(line):  # measured: "The image shows only the upper body of the person.
+        return ""  # Nothing below" went into the render prompt as clothes
     line = ", ".join(c.strip() for c in line.split(",") if c.strip() and not re.search(r"(?i)\b(left|right)\b", c))
     return " ".join(drop_negations(line).split()[:ROLE_WORDS[role]])
 

@@ -376,6 +376,19 @@ last chunk is now only as long as needed (1 + 4n frames). 7 s of the street clip
 jacket, jeans, street and light stay the same. Whole chunks build byte-identical graphs to before.
 
 
+## Four people, and Restage with an outfit each (2026-10-25)
+
+Each preview is the real first 5 s (in the clip's own place) or the start picture (a new place), on the
+16 GB card, from the example clips in `examples/`.
+
+| Test | Result |
+|---|---|
+| Recast of 4 of the 6 office coworkers (astronaut, raincoat, chef, grandpa), clip's place | each character on their own person, left to right, for the whole 5 s; the two not chosen stay as filmed |
+| ... where a chosen person stands half behind one kept as filmed | the two bleed into each other: the grandpa's white beard shows through the kept woman's cheek, a dark red wedge appears by her ponytail, and in one frame her ponytail doubles |
+| Restage, two dancers, an outfit each in words ("a shiny silver sequin jacket", "a bright red tracksuit") | each is cut out of the first frame and dressed in their own edit; faces and hair stay; the left dancer keeps her jeans, the right one is in the tracksuit head to toe, through the whole dance |
+| Restage, one person, outfit and new place together ("a red leather biker jacket", "a rooftop terrace at sunset over a city") | one edit gives both: the jacket over her own top on the rooftop, with her pose, sunglasses and necklace kept |
+| The lower-clothes reader, on a clip that shows only the upper body | it answered "The image shows only the upper body of the person. Nothing below", which went into the prompt as clothes; such replies are now dropped |
+
 ## Running on Modal (2026-10-24)
 
 The judge build renders on Modal (`deploy/modal/`): ComfyUI 0.41.3 + comfy-api-proxy 0.1.6 per container, same

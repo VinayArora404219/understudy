@@ -9,7 +9,7 @@ CASES.json is a list of cases (media paths stay outside git):
      "characters": ["left.png", "right.png"], "place": "keep",          # keep | character | image | describe
      "place_text": "...", "place_image": "room.png",
      "style": "Anime Cel",                                              # restyle
-     "swap": "outfit", "item": "jacket.png",                            # swap: outfit | place
+     "outfits": {"2": {"text": "a red jacket", "image": "jacket.png"}},  # Restage: per chosen person; optional place
      "render": true, "reroll": false, "cancel": false}
 
 Writes OUT_DIR/report.json (one entry per case: what happened at each step, the job's final state, page
@@ -32,7 +32,6 @@ PEOPLE_TIMEOUT = 300_000
 PREVIEW_TIMEOUT = 1_500_000
 RENDER_TIMEOUT = 5_400_000
 PLACES = {"image": "Use an image", "describe": "Describe a place"}
-SWAPS = {"outfit": ("Outfit", "Outfit image"), "place": ("Place", None)}
 
 
 class Step:
@@ -121,14 +120,21 @@ def run_case(page: Page, base: str, case: dict, out: Path) -> dict:
             fill_place(page, case, two)
         elif case["mode"] == "restyle":
             page.get_by_role("button", name=case["style"], exact=True).click()
-        else:
-            tab, zone = SWAPS[case["swap"]]
-            page.get_by_role("button", name=tab, exact=True).click()
-            if zone:
-                upload(page, zone, case["item"])
-                step("item", words=wait_words(page, 1))
-            else:
-                fill_place(page, {**case, "place": case.get("place", "describe")}, False)
+        else:  # Restage: what each chosen person now wears, then an optional new place
+            for pid, o in (case.get("outfits") or {}).items():
+                group = page.get_by_role("group", name=f"Outfit for person {pid}")
+                if o.get("image"):
+                    group.locator("input[type=file]").set_input_files(o["image"])
+                    group.locator("button[aria-label='Remove'], img[alt='Outfit image']").first.wait_for(timeout=180_000)
+                    page.wait_for_function("() => !document.querySelector('[aria-busy=true]')", timeout=WORDS_TIMEOUT)
+                    if o.get("text"):
+                        group.locator("input[placeholder^='e.g.']").fill(o["text"])
+                else:
+                    group.get_by_label("What they wear now").fill(o["text"])
+            step("outfits")
+            if case.get("place", "keep") != "keep":
+                page.get_by_role("button", name=re.compile(r"^Place")).click()
+                fill_place(page, {**case, "mode": "swap"}, False)
         step("choices")
         page.get_by_role("button", name="Make a preview").click()
         page.wait_for_selector("text=Does this look right?", timeout=120_000)

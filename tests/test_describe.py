@@ -100,3 +100,9 @@ def test_nothing_said_to_be_absent_reaches_a_prompt():
     assert describe.drop_negations(text) == "A man, mid-40s, oval face, short black hair, wears a red racing suit"
     assert describe.parse_role("No glasses, a woman with long blonde hair", "character") == "a woman with long blonde hair"
     assert describe.drop_negations("a knotted scarf, nothing else") == "a knotted scarf, nothing else"  # "no" whole words only
+
+
+def test_lower_clothes_out_of_view_give_no_words():
+    assert describe.parse_role("The image shows only the upper body of the person. Nothing below", "lower") == ""
+    assert describe.parse_role("none", "lower") == ""
+    assert describe.parse_role("blue jeans and white trainers", "lower") == "blue jeans and white trainers"

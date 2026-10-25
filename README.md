@@ -14,13 +14,13 @@ Open weights only, end to end, run through the official
 
 | Mode | What changes | How |
 |---|---|---|
-| **Recast** | Someone else performs your moves: a person, a mascot, an animal. One or two performers, in the clip's own place or in another one. | SCAIL-2 (Wan2.1 14B), tracked by SAM 3.1. Another place starts from a picture made with Qwen-Image-Edit-2511. |
+| **Recast** | Someone else performs your moves: a person, a mascot, an animal. Up to four performers in the clip's own place, or two in another one. | SCAIL-2 (Wan2.1 14B), tracked by SAM 3.1. Another place starts from a picture made with Qwen-Image-Edit-2511. |
 | **Restyle** | The whole video, redrawn in a look: anime, toy, pixel art, comic ink and more. | Wan2.1 VACE 14B, video to video on a depth map of every frame, so things that happen later in the clip still happen. |
-| **Restage** | You stay you. Change one thing: your outfit, or the place. | SCAIL-2 recasts you as yourself, so the clip still drives every frame. |
+| **Restage** | You stay you. New clothes for anyone you choose, a new place, or both. | SCAIL-2 recasts you as yourself, so the clip still drives every frame. Each new outfit is put on with Qwen-Image-Edit-2511 first. |
 
 ## What it adds over the stock workflows
 
-- **You choose who is recast.** SAM 3.1 finds everyone in the start frame. You tap one or two people, and
+- **You choose who is recast.** SAM 3.1 finds everyone in the start frame. You tap up to four people, and
   their masks start the video tracker, with no words involved, so two people dressed alike are still told
   apart. Words can't do this: tracking "man" in a crowd followed a passer-by, and the clip reader named a
   different man on each read.
@@ -93,8 +93,11 @@ and its preview takes about as long, since it is that render.
 
 ## Limits (honest list)
 
-- One or two recast performers per clip. Anyone hidden behind another person in the start frame isn't
-  found, so they can't be chosen.
+- Up to four performers in the clip's own place, and two in another place: a new place starts from one
+  image edit, which holds two people. Anyone hidden behind another person in the start frame isn't found,
+  so they can't be chosen. SCAIL-2 itself tells up to six people apart.
+- Where a chosen person stands partly behind someone left as filmed, the two bleed into each other (a
+  beard showing through a cheek). People in clear view work best.
 - 480p at 16 fps native, SCAIL-2's own size and rate. 720p output is a lanczos upscale, and the result page
   says so. Fast hands smear.
 - One character's likeness drifts younger in some runs. Logos and printed text on clothes turn into invented

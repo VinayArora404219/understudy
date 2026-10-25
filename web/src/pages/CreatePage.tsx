@@ -13,10 +13,11 @@ const SHORTEST = 2, LONGEST = 20; // seconds; the server holds the same bounds
 const MODES: [Mode, string, string][] = [
   ["recast", "Recast", "Someone else performs your moves: a person, a mascot, an animal."],
   ["restyle", "Restyle", "Your video, redrawn in a look: anime, toy, pixel art and more."],
-  ["swap", "Restage", "You stay you. Change one thing: your outfit or the place."],
+  ["swap", "Restage", "You stay you. New clothes, a new place, or both."],
 ];
 
-const MAX_PICKS = 2;
+const MAX_PICKS = 4; // SCAIL-2 tells up to six apart; four keeps a face big enough
+const ELSEWHERE_MAX = 2; // a new place starts from one image edit, with room for two characters
 
 /** Everyone found in the clip's start frame (`people`), and who Recast replaces (`picks`, Person ids).
  *  Words can't pick one person out of a crowd, so the visitor taps them (recast/people.py). */
@@ -27,22 +28,22 @@ interface Motion {
 const chosenOf = (m: Motion): Person[] =>
   (m.people?.list ?? []).filter((p) => m.picks.includes(p.id)).sort((a, b) => a.cx - b.cx); // left to right
 /** Recast replaces whoever was chosen; a ready-made motion (no picker) has one performer. */
-const performersOf = (mode: Mode, m: Motion): 1 | 2 => (mode === "recast" && m.picks.length === 2 ? 2 : 1);
+const performersOf = (mode: Mode, m: Motion): number => (mode === "restyle" ? 1 : Math.max(1, m.picks.length));
 /** Chosen before anyone taps: everyone, when there are one or two clear people. Something small next to a
  *  person (a football was found as one) is never chosen for them. */
 function autoPicks(list: Person[]): number[] {
   const biggest = Math.max(0, ...list.map((p) => p.area));
   const clear = list.filter((p) => p.area >= biggest * 0.25);
-  return clear.length <= MAX_PICKS ? clear.map((p) => p.id) : [];
+  return clear.length <= 2 ? clear.map((p) => p.id) : []; // more than two: the visitor taps who
 }
 interface CharSlot { upload: Upload; text: string }
-type SwapWhat = "outfit" | "place";
+/** Restage: what one chosen person now wears, in words, with a picture of it if there is one. */
+interface OutfitSlot { upload?: Upload; text: string }
 interface Change {
-  swap: SwapWhat;
   characters: (CharSlot | undefined)[]; // [only] or [left, right]
   style?: string;
   place: { mode: PlaceMode; text: string; upload?: Upload };
-  outfit?: { upload: Upload; text: string };
+  outfits: (OutfitSlot | undefined)[]; // Restage: one per chosen person, left to right; empty keeps their clothes
   finish: JobParams["finish"];
   audio: JobParams["audio"];
 }
@@ -53,7 +54,7 @@ export function CreatePage() {
   const [mode, setMode] = useState<Mode>(initial);
   const [step, setStep] = useState<Step>("motion");
   const [motion, setMotion] = useState<Motion>({ start: 0, length: 5, picks: [] });
-  const [change, setChange] = useState<Change>({ swap: "outfit", characters: [], place: { mode: "keep", text: "" }, finish: "720p", audio: "original" });
+  const [change, setChange] = useState<Change>({ outfits: [], characters: [], place: { mode: "keep", text: "" }, finish: "720p", audio: "original" });
   const [job, setJob] = useState<Job>();
   const { data: session } = useQuery({ queryKey: ["session"], queryFn: () => api.session() });
 
@@ -100,9 +101,9 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
   const blocked = motion.upload?.checks.some((c) => c.level === "block");
   const clipSeconds = motion.upload?.info.seconds ?? motion.preset?.seconds ?? 0;
   const ready = (motion.upload && !blocked) || motion.preset;
-  // Recast replaces chosen people, so someone must be chosen; Restage only needs the count; Restyle redraws everyone
+  // Recast and Restage change chosen people, so someone must be chosen; Restyle redraws everyone
   const lookForPeople = !!motion.upload && !blocked && mode !== "restyle";
-  const canGo = ready && (mode !== "recast" || !motion.upload || motion.picks.length > 0);
+  const canGo = ready && (mode === "restyle" || !motion.upload || motion.picks.length > 0);
 
   return (
     <section>
@@ -166,7 +167,7 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
       )}
 
       {lookForPeople && motion.upload && (
-        <WhoToReplace upload={motion.upload} start={motion.start} show={mode === "recast"} motion={motion} setMotion={setMotion} />
+        <WhoToReplace upload={motion.upload} start={motion.start} mode={mode} motion={motion} setMotion={setMotion} />
       )}
 
       {ready && clipSeconds > SHORTEST && (
@@ -186,10 +187,10 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
   );
 }
 
-/** Looks for everyone in the clip's start frame once a clip is in. Recast shows them to choose who is replaced;
- *  Restage (show=false) only keeps the count, since an outfit needs exactly one person. */
-function WhoToReplace({ upload, start, show, motion, setMotion }: {
-  upload: Upload; start: number; show: boolean; motion: Motion; setMotion: React.Dispatch<React.SetStateAction<Motion>>;
+/** Looks for everyone in the clip's start frame once a clip is in, to choose who is replaced (Recast) or who
+ *  gets new clothes or moves (Restage). */
+function WhoToReplace({ upload, start, mode, motion, setMotion }: {
+  upload: Upload; start: number; mode: Mode; motion: Motion; setMotion: React.Dispatch<React.SetStateAction<Motion>>;
 }) {
   const qc = useQueryClient();
   const [key, setKey] = useState<string>();
@@ -219,7 +220,7 @@ function WhoToReplace({ upload, start, show, motion, setMotion }: {
     setMotion((m) => m.people?.key === key ? m : { ...m, people: { key, frame_url: entry.frame_url!, list }, picks: autoPicks(list) });
   }, [key, entry?.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!show) return null;
+  const verb = mode === "recast" ? "replace" : "restage";
   const list = (motion.people?.key === key && motion.people?.list) || [];
   const toggle = (id: number) => {
     setFull(false);
@@ -228,7 +229,7 @@ function WhoToReplace({ upload, start, show, motion, setMotion }: {
   };
   return (
     <div className="mt-8">
-      <div className="mb-1 font-medium">Who do you want to replace?</div>
+      <div className="mb-1 font-medium">{mode === "recast" ? "Who do you want to replace?" : "Who do you want to restage?"}</div>
       {finding ? (
         <>
           <p className="mb-3 flex items-center gap-2 text-sm text-ink-300"><Spinner />
@@ -241,18 +242,18 @@ function WhoToReplace({ upload, start, show, motion, setMotion }: {
       ) : error || !list.length ? (
         <div className="rounded-xl border border-ink-700 p-4 text-sm">
           <p className="text-ink-100">{error ?? "We couldn't find anyone in your first frame."}</p>
-          <p className="mt-1 text-ink-500">Recast needs a person or an animal in view at the start of the clip.</p>
+          <p className="mt-1 text-ink-500">This needs a person or an animal in view at the start of the clip.</p>
           <Button size="sm" className="mt-3" disabled={ask.isPending} onClick={() => { setKey(undefined); setMotion((m) => ({ ...m, people: undefined, picks: [] })); ask.mutate(true); }}>Try again</Button>
         </div>
       ) : (
         <>
           <p className="mb-3 text-sm text-ink-300">
             {list.length === 1 ? "We found one performer. They're chosen; tap to change."
-              : motion.picks.length ? `We found ${list.length}. Tap to choose or free someone, up to two.`
-              : `We found ${list.length}. Tap who to replace (one or two).`}
+              : motion.picks.length ? `We found ${list.length}. Tap to choose or free someone, up to ${MAX_PICKS}.`
+              : `We found ${list.length}. Tap who to ${verb} (up to ${MAX_PICKS}).`}
           </p>
           <PeoplePicker frameUrl={motion.people!.frame_url} people={list} picks={motion.picks} onToggle={toggle} />
-          {full && <p className="mt-2 text-sm text-warn">Up to two for now. Tap someone chosen to free them first.</p>}
+          {full && <p className="mt-2 text-sm text-warn">Up to {MAX_PICKS}. Tap someone chosen to free them first.</p>}
           {!motion.picks.length && <p className="mt-2 text-sm text-ink-500">Choose at least one person to continue.</p>}
         </>
       )}
@@ -268,36 +269,38 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
   const qc = useQueryClient();
   const performers = performersOf(mode, motion);
   const two = performers === 2;
+  const many = performers > ELSEWHERE_MAX; // only the clip's own place
   const chosen = chosenOf(motion);
-  const found = motion.people?.list.length; // undefined: not known, and the server checks what it sees
-  const onePerson = found === undefined || found === 1;
   const slots = change.characters.slice(0, performers);
   const filled = slots.filter((c): c is CharSlot => !!c);
-  // A garment needs one person; say why instead of hiding it.
-  const swap: SwapWhat = !onePerson && change.swap !== "place" ? "place" : change.swap;
 
-  const placeModes: [PlaceMode, string][] = mode === "recast"
+  const placeModes: [PlaceMode, string][] = many ? [["keep", "My clip's place"]]
+    : mode === "recast"
     ? [["keep", "My clip's place"],
        ...(filled.length ? [["character", two ? "Left character's place" : "My character's place"]] as [PlaceMode, string][] : []),
        ["image", "Use an image"], ["describe", "Describe a place"]]
-    : [["describe", "Describe a place"], ["image", "Use an image"]];
-  const wantPlace = mode === "recast" || (mode === "swap" && swap === "place");
-  const fallback: PlaceMode = mode === "recast" ? "keep" : "describe";
+    : [["keep", "My clip's place"], ["describe", "Describe a place"], ["image", "Use an image"]];
+  const wantPlace = mode !== "restyle";
   const place = !wantPlace ? { ...change.place, mode: "keep" as PlaceMode }
-    : placeModes.some(([m]) => m === change.place.mode) ? change.place : { ...change.place, mode: fallback };
+    : placeModes.some(([m]) => m === change.place.mode) ? change.place : { ...change.place, mode: "keep" as PlaceMode };
   const style = mode === "swap" ? undefined : change.style;
-  const outfit = mode === "swap" && swap === "outfit" ? change.outfit : undefined;
-  const outfitOk = !outfit || outfit.text.trim().length > 2;
   const characters = mode === "recast" ? filled : [];
+  // Restage: an outfit or nothing for each chosen person; one with only a picture still needs its words
+  const outfits = mode === "swap" ? Array.from({ length: performers }, (_, i) => change.outfits[i]) : [];
+  const given = outfits.filter((o): o is OutfitSlot => !!o && (!!o.upload || !!o.text.trim()));
+  const outfitsOk = given.every((o) => o.text.trim().length > 2);
+  const pictures = given.filter((o) => o.upload).length + (place.mode === "image" ? 1 : 0);
+  const fits = place.mode === "keep" || pictures <= 2; // a new place is one edit: the frame and two pictures
 
   const placeOk = (place.mode !== "describe" || place.text.trim().length > 2) && (place.mode !== "image" || !!place.upload);
   const ready = mode === "recast"
-    ? filled.length === (two ? 2 : 1) && filled.every((c) => c.text.trim().length > 2) && placeOk
+    ? filled.length === performers && filled.every((c) => c.text.trim().length > 2) && placeOk
     : mode === "restyle" ? !!style
-    : swap === "outfit" ? !!outfit?.upload && outfitOk
-    : place.mode !== "keep" && placeOk;
-  const missing = mode === "recast" ? (two ? "Add a character for each performer." : "Add a character image.")
-    : mode === "restyle" ? "Pick a look." : swap === "place" ? "Say where to go." : `Add the ${swap} and say what it is.`;
+    : (given.length > 0 || place.mode !== "keep") && outfitsOk && placeOk && fits;
+  const missing = mode === "recast" ? (performers > 1 ? "Add a character for each performer." : "Add a character image.")
+    : mode === "restyle" ? "Pick a look."
+    : !fits ? "Two outfit pictures and a place picture don't fit together: describe the place, or one outfit, in words."
+    : !outfitsOk ? "Say what each new outfit is." : !placeOk ? "Say where to go." : "Give someone new clothes, or pick a new place.";
 
   const setSlot = (i: number, c: CharSlot | undefined) => {
     const next = [...slots];
@@ -311,13 +314,13 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
       const params: JobParams = {
         mode,
         motion: { upload_id: motion.upload?.id, preset_id: motion.preset?.id, start: motion.start, length: motion.length,
-          picks: mode === "recast" && motion.picks.length ? motion.picks : undefined },
+          picks: mode !== "restyle" && motion.picks.length ? motion.picks : undefined },
         performers,
         subject: "person", // Restage's items need a person; with picks the server reads person or animal from the clip
         characters: refs,
         style,
         place: { mode: place.mode, text: place.text || undefined, upload_id: place.upload?.id },
-        outfit: outfit && { upload_id: outfit.upload.id, text: outfit.text },
+        outfits: mode === "swap" ? outfits.map((o) => (o && o.text.trim() ? { upload_id: o.upload?.id, text: o.text } : null)) : undefined,
         finish: change.finish,
         audio: change.audio,
       };
@@ -341,6 +344,7 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
           onClear={() => setChange({ ...change, place: { ...change.place, upload: undefined } })} />
       )}
       {place.mode === "keep" && mode === "recast" && <p className="text-sm text-ink-300">Your clip's room, light and camera stay; only the performer changes.</p>}
+      {many && mode === "recast" && <p className="text-sm text-ink-500">A new place works with up to {ELSEWHERE_MAX} people; you chose {performers}.</p>}
       {place.mode === "character" && <p className="text-sm text-ink-300">{two ? "Both characters perform in the place in the left character's photo." : "Your character performs in the place in their own photo."}</p>}
     </>
   );
@@ -385,23 +389,29 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
       </>}
 
       {mode === "swap" && <>
-        <SectionTitle step="Step 2" title="What changes?" hint="You stay you. One thing changes; the rest is redrawn to match your clip." />
-        <Card className="space-y-5 p-5">
-          <Segmented label="" value={swap}
-            options={[["outfit", "Outfit"], ["place", "Place"]]}
-            onChange={(v) => setChange({ ...change, swap: v as SwapWhat })} />
-          {!onePerson && swap === "place" && change.swap !== "place" && (
-            <p className="text-sm text-ink-500">A new outfit needs one person in the clip; we found {found} in your first frame. A new place works with any number.</p>
-          )}
-          {swap === "outfit" && <>
-            <ImagePick label="Outfit image" image={change.outfit?.upload} hint="A product photo of the garment works best."
-              onPick={(u) => setChange({ ...change, outfit: { upload: u, text: change.outfit?.text ?? "" } })}
-              onClear={() => setChange({ ...change, outfit: undefined })} />
-            {change.outfit && <ItemText role="outfit" upload={change.outfit.upload} value={change.outfit.text}
-              onChange={(t) => setChange({ ...change, outfit: { ...change.outfit!, text: t } })} />}
-          </>}
-          {swap === "place" && placeEditor}
+        <SectionTitle step="Step 2" title="What changes?"
+          hint="You stay you. Give anyone you chose new clothes, take everyone somewhere new, or both." />
+        <Card className="space-y-6 p-5">
+          {(chosen.length ? chosen : [undefined]).map((person, i) => (
+            <div key={person?.id ?? i} className={cx(i > 0 && "border-t border-ink-700/70 pt-6")}>
+              <OutfitPick slot={change.outfits[i]} label={person ? `Outfit for person ${person.id}` : "Outfit"}
+                who={person && motion.people ? (
+                  <span className="flex items-center gap-3">
+                    <PersonThumb frameUrl={motion.people.frame_url} box={person.box} className="h-20 w-auto max-w-20" />
+                    <span>Person {person.id}</span>
+                  </span>
+                ) : ""}
+                onChange={(o) => {
+                  const next = Array.from({ length: performers }, (_, k) => change.outfits[k]);
+                  next[i] = o;
+                  setChange({ ...change, outfits: next });
+                }} />
+            </div>
+          ))}
         </Card>
+        <Option title="Place" line="Optional: keep your own room, or go somewhere new." on={place.mode !== "keep"}>
+          {placeEditor}
+        </Option>
       </>}
 
       <Card className="p-5">
@@ -465,8 +475,8 @@ export function PreviewStep({ job: first, onBack, backLabel = "Change choices" }
 
   const matching = job.state === "matching";
   const cast = job.preview?.kind === "cast";
-  // Recast in the clip's place previews the video's real first 5 seconds (minutes of GPU); a 5 s video is all of it
-  const firstSecond = job.params.mode === "recast" && job.params.place.mode === "keep";
+  // Recast and Restage in the clip's place preview the video's real first 5 seconds (minutes of GPU); a 5 s video is all of it
+  const firstSecond = job.params.mode !== "restyle" && job.params.place.mode === "keep";
   const whole = firstSecond && job.cost_seconds <= 5; // one chunk: the preview is the whole video
   const [editing, setEditing] = useState(false); // an unsaved scene edit must not be skipped by a render
   return (
@@ -585,7 +595,7 @@ function CastWhileRendering({ job, whole }: { job: Job; whole: boolean }) {
   const p = job.progress;
   const pct = !p ? 0 : p.stage === "dressing" ? 1 : p.stage === "starting_gpu" ? 2 : p.stage === "waiting_for_gpu" ? 4 : p.stage === "loading_models" ? 8
     : p.stage === "rendering" ? Math.round(12 + (70 * (p.step ?? 0)) / (p.steps || 6)) : 88;
-  const line = !p ? "Starting…" : p.stage === "dressing" ? "Dressing your characters in the outfit…" : p.stage === "starting_gpu" ? "Reading your clip…" : p.stage === "waiting_for_gpu" ? "Waiting for the GPU…"
+  const line = !p ? "Starting…" : p.stage === "dressing" ? "Putting on the new clothes…" : p.stage === "starting_gpu" ? "Reading your clip…" : p.stage === "waiting_for_gpu" ? "Waiting for the GPU…"
     : p.stage === "loading_models" ? "Loading the models…" : p.stage === "rendering" ? `Drawing your video: step ${p.step} of ${p.steps}`
     : "Putting everyone else back as filmed…";
   const left = p?.eta_seconds ? ` · about ${Math.max(1, Math.round(p.eta_seconds / 60))} min left` : "";
@@ -628,18 +638,23 @@ function Summary({ mode, motion, change, creditsLeft }: { mode: Mode; motion: Mo
       r.push(["Replacing", chosen.length === 0 ? "Not chosen" : chosen.length === 1 ? `Person ${chosen[0].id}${of}`
         : `People ${chosen[0].id} and ${chosen[1].id}${of}`]);
     }
-    const two = performersOf(mode, motion) === 2;
+    const performers = performersOf(mode, motion);
+    const two = performers > 1;
     const placeLabel = change.place.mode === "keep" ? "Your own" : change.place.mode === "describe" ? change.place.text || "Described"
       : change.place.mode === "character" ? "Character's photo" : "From image";
     if (mode === "recast") {
-      change.characters.slice(0, two ? 2 : 1).forEach((c, i) => c && r.push([
+      change.characters.slice(0, performers).forEach((c, i) => c && r.push([
         chosen[i] && two ? `For person ${chosen[i].id}` : two ? (i ? "Right" : "Left") : "Character", c.text || "Your image"]));
       if (change.style) r.push(["Look", styles.data?.find((s) => s.key === change.style)?.name ?? change.style]);
       r.push(["Place", placeLabel]);
     } else if (mode === "restyle") {
       r.push(["Look", change.style ? styles.data?.find((s) => s.key === change.style)?.name ?? change.style : "Not chosen"]);
     } else {
-      r.push(["Change", change.swap === "outfit" ? change.outfit?.text || "Outfit" : placeLabel]);
+      chosenOf(motion).forEach((person, i) => {
+        const o = change.outfits[i];
+        if (o?.text.trim()) r.push([`Person ${person.id}`, o.text]);
+      });
+      r.push(["Place", placeLabel]);
     }
     r.push(["Quality", change.finish === "480p" ? "480p native" : `${change.finish} (upscaled)`]);
     return r;
@@ -738,6 +753,27 @@ function CharacterPick({ who, slot, onChange }: { who: React.ReactNode; slot?: C
           help={writing ? "You can edit the words once they're written. This takes about half a minute."
             : failed ? "We couldn't read the picture. The video draws them from the photo and these words: describe their face, hair and clothes. Their clothes come from the photo."
             : "Written from the picture. The video draws them from the photo and these words, so fix anything wrong. Their clothes come from the photo: to change them, use a photo in those clothes. Their moves come from your clip: leave out names and actions."} />
+      )}
+    </div>
+  );
+}
+
+/** Restage: what one chosen person now wears. Words alone work; a picture of the clothes helps. Empty: their own. */
+function OutfitPick({ who, label, slot, onChange }: {
+  who: React.ReactNode; label: string; slot?: OutfitSlot; onChange: (o: OutfitSlot | undefined) => void;
+}) {
+  return (
+    <div className="space-y-3" role="group" aria-label={label}>
+      {who && <div className="text-sm font-medium text-ink-100">{who}</div>}
+      <ImagePick label="Outfit image" image={slot?.upload} hint="Optional: a photo of the clothes. Words alone work too."
+        onPick={(u) => onChange({ upload: u, text: slot?.text ?? "" })}
+        onClear={() => onChange(slot?.text.trim() ? { text: slot.text } : undefined)} />
+      {slot?.upload ? (
+        <ItemText role="outfit" upload={slot.upload} value={slot.text} onChange={(t) => onChange({ ...slot, text: t })} />
+      ) : (
+        <TextField label="What they wear now" placeholder="e.g. a red leather biker jacket" value={slot?.text ?? ""}
+          onChange={(t) => onChange(t ? { ...slot, text: t } : undefined)}
+          help="Leave empty to keep their own clothes." />
       )}
     </div>
   );
