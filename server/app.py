@@ -944,7 +944,9 @@ def run_preview(j: dict, seed: int) -> None:
             progress={"stage": "waiting_for_gpu", "eta_seconds": work["segments"] * 520} if auto else None,
             _work={**work, "reference": ref.name, "edited": False, **engine, "first": reuse},
             preview={"frame_url": _url(shown), "reference_url": _url(ref), "seed": seed, "kind": kind,
-                     "prompt_summary": _summary(p), "notes": notes, "seen": seen, **first})
+                     "prompt_summary": _summary(p), "notes": notes, "seen": seen, **first,
+                     # who becomes whom stays on the page until the video is done
+                     **({"cast": (j.get("preview") or {}).get("cast")} if (j.get("preview") or {}).get("cast") else {})})
     if auto:  # nothing to approve: on to the video (a one-chunk video is the chunk just drawn)
         _enqueue("render", j["id"], None)
 

@@ -1,8 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
+import type { Job } from "../api/types";
 import { Card, Pill } from "../components/ui";
 import { Empty } from "./JobPage";
+
+/** The video's real first frame once there is one; before that, never the sheet of cut-outs the model works
+ *  from (it is not how the video looks), but the clip's first frame. */
+const posterOf = (j: Job) => j.preview?.first_frame_url
+  ?? (j.preview?.kind === "cast" ? j.preview.frame_url : j.preview?.reference_url ?? j.preview?.frame_url);
 
 export function LibraryPage() {
   const { data: jobs, isLoading } = useQuery({ queryKey: ["jobs"], queryFn: () => api.jobs(), refetchInterval: 4000 });
@@ -20,7 +26,7 @@ export function LibraryPage() {
           <Link key={j.id} to={`/jobs/${j.id}`}>
             <Card className="overflow-hidden transition hover:border-ink-500">
               <div className="aspect-[9/16] bg-ink-900">
-                {(j.preview?.first_frame_url ?? j.preview?.reference_url) && <img src={j.preview?.first_frame_url ?? j.preview?.reference_url} alt="" className="h-full w-full object-cover" />}
+                {posterOf(j) && <img src={posterOf(j)} alt="" className="h-full w-full object-cover" />}
               </div>
               <div className="flex items-center justify-between gap-2 p-3">
                 <span className="truncate text-sm font-medium">{j.title}</span>
