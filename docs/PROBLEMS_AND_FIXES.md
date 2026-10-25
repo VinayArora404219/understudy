@@ -1,6 +1,6 @@
 # Problems we hit, and how each was fixed
 
-Every problem found while building Performance Recast, in the order a video goes through the app: the
+Every problem found while building Understudy, in the order a video goes through the app: the
 clip, the start picture, the engine, who is recast, keeping the clip, the character, the page, and the
 plumbing. Each entry is what we saw, why it happened, and what changed. Measurements behind them are in
 [bench/RESULTS.md](../bench/RESULTS.md); the test clips are private, so no frames are shown here.

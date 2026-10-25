@@ -91,3 +91,21 @@ def test_loose_pieces_of_a_characters_mask_are_left_out(tmp_path):
     out = Image.open(people.cut_out(tmp_path / "photo.png", found, tmp_path, tmp_path / "cut.png", 0xEEEEEE))
     assert out.size == (46, 66)  # cropped round the character alone
     assert (0, 255, 0) not in {px for _, px in out.getcolors(10000)}
+
+
+def test_only_full_size_people_touching_a_chosen_one_count_as_neighbours(tmp_path):
+    from PIL import Image
+    import numpy as np
+    from recast.people import Person, touching
+
+    def mask(name, x0, x1, y0=10, y1=90):
+        m = np.zeros((100, 200), np.uint8)
+        m[y0:y1, x0:x1] = 255
+        Image.fromarray(m).save(tmp_path / name)
+        return name
+    found = [Person(id=1, box=(0, 0, 0.2, 0.8), area=0.16, cx=0.1, mask=mask("a.png", 0, 40)),
+             Person(id=2, box=(0.2, 0, 0.2, 0.8), area=0.16, cx=0.3, mask=mask("b.png", 41, 80)),  # touches 1
+             Person(id=3, box=(0.6, 0, 0.2, 0.8), area=0.16, cx=0.7, mask=mask("c.png", 120, 160)),  # far off
+             Person(id=4, box=(0.2, 0, 0.02, 0.1), area=0.002, cx=0.21, mask=mask("d.png", 41, 44, 10, 20))]  # a hand
+    assert touching(found, [1], tmp_path, 3) == [2]
+    assert touching(found, [1], tmp_path, 0) == []

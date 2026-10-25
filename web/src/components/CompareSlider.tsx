@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { aspectOf } from "./ui";
 
 /** Before/after wipe over two synchronised videos (or stills). Drag, tap or use arrow keys. */
-export function CompareSlider({ before, after, poster, beforePoster, kind = "video", labels = ["Original", "Recast"], aspect }: {
+export function CompareSlider({ before, after, poster, beforePoster, kind = "video", labels = ["Original", "Result"], aspect }: {
   aspect?: [number, number]; // the result's shape; both layers are centre-cropped to it, as the result was
   beforePoster?: string; // the original's still, shown until its video plays (never the result's)
   before: string;

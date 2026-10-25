@@ -100,6 +100,41 @@ def at(people: list[Person], src: Path, x: float, y: float) -> int | None:
     return min(hits, key=lambda p: p.area).id if hits else None
 
 
+TOUCH = 0.03  # a chosen performer's outline grown by this much of the frame's width: who it touches
+TOUCH_MIN = 0.02  # the share of a person's own outline inside that, for them to count as touching
+NEAR_AREA = 0.02  # of the frame: smaller is a hand or a far-off head, which the model never recast
+
+
+def touching(people: list[Person], ids: list[int], src: Path, limit: int) -> list[int]:
+    """The people not chosen whose outline touches a chosen one's, most touched first, at most `limit`.
+
+    Measured on a group of six with two chosen: the model also recast each one's neighbour (a man pressed
+    against a chosen one became a second astronaut), and the parts of them outside their own outline stayed
+    in the video after they were put back as filmed. Told who those neighbours are (themselves), it has no
+    one to invent there (bench/RESULTS.md)."""
+    import cv2
+
+    chosen = [p for p in people if p.id in ids]
+    if not chosen or limit <= 0:
+        return []
+    first = np.asarray(Image.open(src / chosen[0].mask).convert("L")) > 127
+    h, w = first.shape
+    k = max(3, round(TOUCH * w)) | 1
+    grown = np.zeros((h, w), np.uint8)
+    for p in chosen:
+        m = (np.asarray(Image.open(src / p.mask).convert("L").resize((w, h), Image.NEAREST)) > 127).astype(np.uint8)
+        grown |= cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    scores = []
+    for p in people:
+        if p.id in ids or p.area < NEAR_AREA:
+            continue
+        m = np.asarray(Image.open(src / p.mask).convert("L").resize((w, h), Image.NEAREST)) > 127
+        share = float((m & (grown > 0)).sum()) / max(1, int(m.sum()))
+        if share >= TOUCH_MIN:
+            scores.append((share, p.id))
+    return [pid for _, pid in sorted(scores, reverse=True)[:limit]]
+
+
 def write_picks(people: list[Person], ids: list[int], src: Path, dst: Path, size: tuple[int, int]) -> list[Path]:
     """The chosen masks at the render size, left to right: the order SCAIL-2 matches characters in."""
     chosen = sorted((p for p in people if p.id in ids), key=lambda p: p.cx)

@@ -135,7 +135,7 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
             <Dropzone accept="video/*" busy={up.isPending} onFile={(f) => up.mutate(f)} label="Upload a clip">
               <div className="grid h-12 w-12 place-items-center rounded-full bg-ink-800 text-xl">▶</div>
               <div className="mt-4 font-medium">Drop a clip or tap to choose</div>
-              <div className="mt-1 text-sm text-ink-500">4–30 seconds · one performer · phone on a stand works best</div>
+              <div className="mt-1 text-sm text-ink-500">4–30 seconds · up to 90 MB · phone on a stand works best</div>
             </Dropzone>
           ) : (
             <Card className="flex flex-col gap-5 p-5 sm:flex-row">
@@ -709,7 +709,7 @@ function Summary({ mode, motion, change, creditsLeft }: { mode: Mode; motion: Mo
             <span>{cost} credit{cost === 1 ? "" : "s"}</span></div>
           {creditsLeft !== undefined && <div className="mt-1 flex justify-between"><span className="text-ink-500">Left after</span>
             <span className={creditsLeft - cost < 0 ? "text-bad" : ""}>{Math.max(0, creditsLeft - cost)}</span></div>}
-          <p className="mt-3 text-xs text-ink-500">1 credit = 1 second of finished video. Previews are free, and a failed
+          <p className="mt-3 text-xs text-ink-500">1 credit = 1 second of finished video. Drafts are free, and a failed
             render is refunded automatically.</p>
         </div>
       </Card>

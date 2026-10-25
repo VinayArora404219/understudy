@@ -19,7 +19,7 @@ export function AppShell() {
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-6 px-4 sm:px-6">
           <Link to="/" className="flex items-center gap-2.5 font-semibold tracking-tight">
             <img src="/favicon.svg" alt="" className="h-7 w-7" />
-            <span>Recast</span>
+            <span>Understudy</span>
           </Link>
           <nav className="flex items-center gap-1 text-sm">
             {[["/create", "Create"], ["/library", "My renders"]].map(([to, label]) => (
@@ -31,7 +31,7 @@ export function AppShell() {
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
             {session && session.kind !== "guest" && (
-              <span className="hidden sm:inline text-ink-300" title="1 credit = 1 second of finished video. Previews are free.">
+              <span className="hidden sm:inline text-ink-300" title="1 credit = 1 second of finished video. Drafts are free.">
                 <span className="text-ink-100 font-medium tabular-nums">{session.credits_left}</span>
                 <span className="text-ink-500"> / {session.credits_total} credits left</span>
               </span>

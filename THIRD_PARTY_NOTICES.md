@@ -1,6 +1,6 @@
 # Third-party notices
 
-Performance Recast's own code is MIT (see [LICENSE](LICENSE)). It ships no model weights and no ComfyUI code:
+Understudy's own code is MIT (see [LICENSE](LICENSE)). It ships no model weights and no ComfyUI code:
 the models are downloaded from their publishers at the pinned revisions below, and ComfyUI runs as a separate
 program that the app talks to over HTTP through the Comfy SDK. The full list with sizes and SHA-256 hashes is
 [manifests/models.json](manifests/models.json).

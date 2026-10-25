@@ -342,6 +342,13 @@ def _prepare(j: dict) -> dict:
         work["pick_crop"] = list(people.crop_box(found_people, picks))
         work["people_dir"] = src_dir.relative_to(DATA).as_posix()
         work["pick_masks"] = [f.mask for f in found_people if f.id in picks]
+        if _mode(p) == "recast" and p["place"]["mode"] == "keep":  # who they touch goes in as themselves
+            near = people.touching(found_people, picks, src_dir, scail.MAX_PEOPLE - len(picks))
+            if near:
+                ids = [f.id for f in sorted((f for f in found_people if f.id in picks + near), key=lambda f: f.cx)]
+                work["identities"] = [_named(m, f"ident{k}").name for k, m in
+                                      enumerate(people.write_picks(found_people, ids, src_dir, d, (dv.width, dv.height)))]
+                work["identity_ids"], work["near"] = ids, near
     _update(j, _work=work)
     return work
 
@@ -942,7 +949,14 @@ def run_preview(j: dict, seed: int) -> None:
                                  "it down to where the performer is cut off.")
             photos.append(cut or whole)
         if len(boxes) == len(photos):  # each character where their performer stands (scail.placed_sheet)
-            ref = scail.placed_sheet(photos, boxes, (dv.width, dv.height), d / "reference.png", colour)
+            for k, f in enumerate(f for f in found if f.id in (work.get("near") or [])):  # themselves, cut out
+                own = people.cut_out(DATA / work["people_dir"] / "frame.png", [f], DATA / work["people_dir"],
+                                     d / f"near_{k}.png", colour)
+                if own:
+                    boxes, photos = boxes + [f.box], photos + [own]
+            order = sorted(range(len(boxes)), key=lambda i: boxes[i][0] + boxes[i][2] / 2)
+            ref = scail.placed_sheet([photos[i] for i in order], [boxes[i] for i in order], (dv.width, dv.height),
+                                     d / "reference.png", colour)
         else:
             ref = scail.reference_sheet(photos, d / "reference.png")
         kind = "cast"
@@ -1119,19 +1133,28 @@ def run_render(j: dict, _arg: Any = None) -> None:
     _render_and_finish(j, work, d, p, rp, g, ref, drive, engine, steps, models)
 
 
+NEAR_TEXT = "the same person as in the video, as filmed"  # a neighbour of a chosen performer (people.touching)
+
+
 def _scail_params(j: dict, work: dict, d: Path, p: dict, ref: Path, drive: Path, *,
                   chunks: int | None = None) -> scail.ScailParams:
     """The render's SCAIL-2 settings. With `chunks=1`, its first chunk alone: the preview, which is then
     exactly how the video starts."""
     scene, background = _scene(p)
     keeping = bool(work.get("picks") and work["replace"])
+    texts = work.get("texts") or [c["text"] for c in _characters(p)]
+    ident = work.get("identities") if keeping else None
+    if ident:  # the chosen, left to right, with the neighbours they touch as themselves (_prepare)
+        chosen = iter(texts)
+        texts = [NEAR_TEXT if pid in work["near"] else next(chosen) for pid in work["identity_ids"]]
     return scail.ScailParams(
         drive=drive.name, reference=ref.name, layout=work["layout"], chunks=chunks or work["segments"],
         # the first chunk alone is as long as it is in the whole video (a video under 5 s is one short chunk)
         frames=(scail.lengths_for(work["frames"])[0] if chunks == 1 else work["frames"]) if work.get("frames") else 0,
-        prompt=scail.prompt(work.get("texts") or [c["text"] for c in _characters(p)], work.get("poses") or [],
-                            replace=work["replace"], place=background if scene == "new" else ""),
-        track=work["track"], people=work["people"], replace=work["replace"], picks=work.get("picks"),
+        prompt=scail.prompt(texts, work.get("poses") or [], replace=work["replace"],
+                            place=background if scene == "new" else ""),
+        track=work["track"], people=len(ident) if ident else work["people"], replace=work["replace"],
+        picks=ident or work.get("picks"),
         keep_points=[[list(pt) for pt in keep.inside_points(d / name)] for name in work["picks"]] if keeping else None,
         others=list(work.get("others") or []) if keeping else None,
         # the preview's seed: "Try another version" re-rolls the video itself, so the render keeps what was shown
@@ -1159,7 +1182,7 @@ def _first_chunk(j: dict, work: dict, d: Path, p: dict, ref: Path) -> tuple[dict
         def make():
             rp.reference, rp.drive = client.assets.from_file(ref), client.assets.from_file(drive)
             if rp.picks:
-                rp.picks = [client.assets.from_file(d / name) for name in work["picks"]]
+                rp.picks = [client.assets.from_file(d / name) for name in work.get("identities") or work["picks"]]
             if rp.others:
                 rp.others = [client.assets.from_file(d / name) for name in work["others"]]
             return scail.build(rp)
@@ -1177,7 +1200,7 @@ def _first_chunk(j: dict, work: dict, d: Path, p: dict, ref: Path) -> tuple[dict
     if not files:
         raise RuntimeError("the preview finished without a video")
     _update(j, progress={"stage": "finishing", "eta_seconds": 15})
-    video = composite.keep_others(drive, files[0], *kept, d / "first_kept.mp4") if kept else files[0]
+    video = _in_place(work, drive, files[0], kept, d, "first")
     clip = _named(media.without_audio(video, d / "first.mp4"), "first")
     still = _named(media.frame_at(clip, d / "first_frame.jpg", layout=work["layout"], start=0, box=None), "first_frame")
     reuse = {"sha": recipe.graph_sha(g), "job_id": gjob.id, "seconds": round(time.time() - t0, 1),
@@ -1278,9 +1301,17 @@ def _render_and_finish(j, work, d, p, rp, g, ref, drive, engine, steps, models) 
             return
     if not files:
         raise RuntimeError("the render finished without a video")
-    if kept:  # everyone not recast, as filmed (recast/keep.py)
-        files = [composite.keep_others(drive, files[0], *kept, d / "render_kept.mp4")]
+    files = [_in_place(work, drive, files[0], kept, d, "render")]
     _deliver(j, work, d, p, rp, g, ref, drive, engine, models, files, job_id, t0)
+
+
+def _in_place(work: dict, drive: Path, render: Path, kept: list | None, d: Path, stem: str) -> Path:
+    """A render in the clip's own place, finished: graded to the clip's colours (composite.grade), then
+    everyone not recast put back as filmed (composite.keep_others). Another place or a restyle is as rendered."""
+    if not work.get("replace"):
+        return render
+    render = composite.grade(drive, render, d / f"{stem}_graded.mp4")
+    return composite.keep_others(drive, render, *kept, d / f"{stem}_kept.mp4") if kept else render
 
 
 def _submit_render(j, work, d, rp, g, ref, drive, engine, on_event):
@@ -1291,7 +1322,7 @@ def _submit_render(j, work, d, rp, g, ref, drive, engine, on_event):
         def make():  # uploaded as SDK assets
             rp.reference, rp.drive = client.assets.from_file(ref), client.assets.from_file(drive)
             if getattr(rp, "picks", None):
-                rp.picks = [client.assets.from_file(d / name) for name in work["picks"]]
+                rp.picks = [client.assets.from_file(d / name) for name in work.get("identities") or work["picks"]]
             if getattr(rp, "others", None):
                 rp.others = [client.assets.from_file(d / name) for name in work["others"]]
             return engine.build(rp)
@@ -1326,7 +1357,7 @@ def _deliver(j, work, d, p, rp, g, ref, drive, engine, models, files, job_id, t0
     compare = media.side_by_side(drive, final, d / "compare.mp4", vertical=work["layout"].startswith("landscape"))
     seconds = round(time.time() - t0, 1)
     rp.reference, rp.drive = ref.name, drive.name  # SDK assets hold a live client: the recipe names files
-    picks = work.get("picks") or []
+    picks = work.get("identities") or work.get("picks") or []  # the recipe names what the render was given
     if getattr(rp, "picks", None):
         rp.picks = list(picks)
     if getattr(rp, "others", None):
@@ -1432,7 +1463,7 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Performance Recast (local)", docs_url=None, redoc_url=None, lifespan=_lifespan)
+app = FastAPI(title="Understudy (local)", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
 
 @app.middleware("http")

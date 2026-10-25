@@ -42,12 +42,12 @@ export function JudgeEntryPage() {
               This link is yours for the whole judging period and works on any device. What you make with it is
               seen only through it.
               {session?.credits_total ? <> It includes <span className="text-ink-100">{session.credits_total} credits</span>, one per
-                second of finished video; previews are free.</> : null}
+                second of finished video, refunded if a render fails.</> : null}
             </p>
             <ol className="mx-auto mt-8 max-w-sm space-y-3 text-left text-sm text-ink-300">
               <li><span className="text-ink-100">1.</span> Pick a motion: your own clip or one of ours.</li>
               <li><span className="text-ink-100">2.</span> Choose who is recast and as whom, or a look, or a new outfit or place.</li>
-              <li><span className="text-ink-100">3.</span> Check the preview. In your clip's own place it is the real start of your video.</li>
+              <li><span className="text-ink-100">3.</span> Make the video. For one over 5 s you can ask for a free 5 s draft first.</li>
             </ol>
             <Link to="/create" aria-disabled={!ready}
               className={"mt-10 inline-flex h-14 items-center rounded-[var(--radius-control)] bg-accent px-8 font-medium text-accent-ink hover:brightness-105"

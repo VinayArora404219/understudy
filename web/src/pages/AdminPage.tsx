@@ -12,7 +12,7 @@ export function AdminPage() {
     <div className="min-h-screen bg-ink-950 text-ink-100">
       <header className="border-b border-ink-800">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
-          <span className="font-semibold">Recast</span>
+          <span className="font-semibold">Understudy</span>
           <span className="text-ink-500">· Links</span>
           {session.data?.signed_in && <Button size="sm" variant="ghost" className="ml-auto" onClick={() => out.mutate()}>Sign out</Button>}
         </div>
@@ -60,7 +60,7 @@ function Links() {
           <h1 className="text-2xl font-semibold">Judge links</h1>
           <p className="mt-1 text-sm text-ink-500">
             {live.length} live · {live.reduce((n, l) => n + l.used, 0)} of {live.reduce((n, l) => n + l.credits, 0)} credits used.
-            1 credit = 1 second of finished video; previews are free.
+            1 credit = 1 second of finished video; drafts are free.
           </p>
         </div>
       </div>

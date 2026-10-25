@@ -1,4 +1,4 @@
-# Performance Recast
+# Understudy
 
 Film something. Choose who in the clip is recast, and as whom. Get the same performance back, played by
 your characters, in your own room, with everyone you didn't choose left exactly as filmed, your original
@@ -104,7 +104,7 @@ and its preview takes about as long, since it is that render.
   lanczos upscale, and the result page says so. Fast hands smear.
 - One character's likeness drifts younger in some runs. Logos and printed text on clothes turn into invented
   text. Small accessories from a reference photo (glasses) appear in some renders and not others.
-- In the clip's place the room keeps the render's colour, so a white studio comes back slightly grey.
+- In the clip's place the room is the model's own, graded to the clip's colours as a whole (bench/RESULTS.md).
 - Jobs on the same lane queue: two visitors rendering at once wait for each other.
 - Four chunks at most: a 20 s ask delivers about 19.3 s in Recast and Restage and 18.6 s in Restyle, and is
   charged for what it delivers.

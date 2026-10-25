@@ -5,7 +5,7 @@ import { CompareSlider } from "../components/CompareSlider";
 import { Card, Pill } from "../components/ui";
 
 const MODES = [
-  { key: "recast", name: "Recast", line: "Your performance, played by any character: a person, a mascot, your cat. Two performers work too.",
+  { key: "recast", name: "Recast", line: "Your performance, played by any character: a person, a mascot, your cat. Up to four performers at once.",
     swatch: "from-[#c8f560]/30 to-[#7dd3fc]/10" },
   { key: "restyle", name: "Restyle", line: "The same video, redrawn: anime, toy figure, pixel art, comic ink.",
     swatch: "from-[#f0abfc]/30 to-[#7dd3fc]/10" },
@@ -42,7 +42,7 @@ export function LandingPage() {
             </a>
           </div>
           <ul className="mt-8 flex flex-wrap gap-x-6 gap-y-2 text-sm text-ink-500">
-            <li>Preview before you spend a render</li>
+            <li>Pay by the second, refunded if it fails</li>
             <li>Every result comes with its recipe</li>
             <li>Runs on your own GPU too</li>
           </ul>

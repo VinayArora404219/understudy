@@ -442,6 +442,36 @@ The duo clip above, 8 s (two chunks), both characters recast, at 480x832 and at 
 render at 576x1024 and 1024x576. 3:4, 4:3 and square stay at about 480p, and Restyle (Wan VACE, not yet
 measured larger) stays at 480p. A 5 s talking head at 1024x576 took 606 s end to end, preview included.
 
+## Neighbours who touch a chosen performer, and the room's colour (2026-10-25)
+
+**Neighbours.** The six-person office clip (Pexels), people 2 and 4 from the left recast as the astronaut and
+the chef, 5 s at 1024x576. The model also recast the man pressed against each of them: the one on the left
+became a second astronaut, the one in glasses a grey-bearded man in white. Both were put back as filmed, but
+only inside their own outline, and the model had drawn them larger and shifted: a grey-bearded face stayed
+beside the man in glasses, and an astronaut's collar and sleeve beside the man on the left, all 5 s.
+
+- A band of the clip put back round each person left as filmed (9% of the frame's height) removed the face
+  at some moments but not others: where it overlapped the outline of the performer who was replaced, the
+  clip only has that performer to give. Not kept.
+- Kept: the people not chosen whose outline touches a chosen one's (grown by 3% of the frame's width, at
+  least 2% of their outline, at least 2% of the frame) go to the model too, as themselves: their own cut-out
+  from the first frame on the reference sheet, and "the same person as in the video, as filmed" as their
+  words. They are still put back as filmed. Same seed: the face and the collar are gone at every moment
+  checked, and the two characters are unchanged.
+
+Over the 38 past renders in the clip's place, this changes the ones of this office clip only (8). A hand
+(0.4% of the frame) touching a chosen animal, and a small figure inside a chosen one's outline, are left out
+by the size limit. One earlier office render with other picks showed no leak, so the change isn't needed
+there; it renders those neighbours as themselves instead.
+
+**The room's colour.** In the clip's place the room is the model's own, and it drifts: a white studio came
+back 27 to 31 levels darker in every frame. Now each such render is graded to the clip once: a gain per
+channel (an exposure and white balance), fitted on the pixels where the graded render and the clip agree
+(three passes, keeping the best-explained half each time, so the new characters drop out), applied to every
+frame alike. A gain with an offset, fitted on an all-light room, flattened the people. Over 49 past renders
+the gains were within 5% for most, 12 to 20% for the white-studio ones, and at the 25% limit for four square
+ones (checked: closer to the clip, a little bright). No seams by construction, as the whole frame moves.
+
 ## Running on Modal (2026-10-24)
 
 The judge build renders on Modal (`deploy/modal/`): ComfyUI 0.41.3 + comfy-api-proxy 0.1.6 per container, same

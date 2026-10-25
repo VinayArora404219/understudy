@@ -47,3 +47,13 @@ def test_only_bystanders_go_back_and_a_new_character_in_front_wins(tmp_path):
     assert abs(f[15, 10, 0] - 120) < 6  # the new character as rendered
     assert f[15, 50, 0] < 100  # the bystander is back (graded toward the render, still dark)
     assert abs(f[25, 41, 0] - 180) < 12  # the hand in front of him stays rendered
+
+
+def test_the_grade_is_fitted_on_the_room_not_the_new_character():
+    """The render's room is darker than the clip's; where the character stands the two differ anyway."""
+    rng = np.random.default_rng(0)
+    clip = rng.uniform(150, 230, (4, 40, 30, 3)).astype(np.float32)
+    render = clip * np.array([0.88, 0.87, 0.85], np.float32)
+    render[:, 10:30, 10:20] = 30.0  # a dark new character where a light performer stood
+    gain = composite.grade_fit(render, clip)
+    assert np.allclose(gain, 1 / np.array([0.88, 0.87, 0.85]), atol=0.01)

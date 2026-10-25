@@ -105,7 +105,7 @@ class ScailParams:
         if self.picks is not None and len(self.picks) != self.people:
             raise ScailError("one chosen performer per character")
         if self.keep_points is not None and (self.picks is None or not self.replace
-                                             or len(self.keep_points) != self.people):
+                                             or not 1 <= len(self.keep_points) <= self.people):
             raise ScailError("keeping the clip needs the chosen performers, in the clip's place")
         if self.picks is None and (not self.track.strip() or len(self.track) > 60):
             raise ScailError("say what to track in the clip, in a few words")
