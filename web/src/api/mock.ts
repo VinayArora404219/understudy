@@ -150,6 +150,13 @@ export const mockApi: Api = {
   async session() { return { ...session }; },
   async claimLink() { return { kind: "judge" as const, name: session.name }; },
   async presets() { return PRESETS; },
+  async usePreset(pid) {
+    const p = PRESETS.find((x) => x.id === pid)!;
+    const u: Upload = { id: id("up"), kind: "video", url: p.preview_url, thumb_url: p.thumb_url,
+      info: { width: 480, height: 832, seconds: p.seconds }, checks: clipChecks(480, 832, p.seconds) };
+    uploads.set(u.id, u);
+    return u;
+  },
   async styles() { return STYLES; },
   async gallery(): Promise<GalleryItem[]> { return []; },
 
@@ -196,13 +203,17 @@ export const mockApi: Api = {
 
   async createJob(params) {
     const j: Job = { id: id("job"), created_at: new Date().toISOString(), state: "draft", title: title(params),
-      params, cost_seconds: params.motion.length };
+      params, cost_seconds: params.motion.length, auto: params.auto ?? false };
     jobs.set(j.id, j);
     return { ...j };
   },
 
   async requestPreview(jobId, opts) {
     const j = jobs.get(jobId)!;
+    if (j.auto) {  // straight to the video: credits held from the start
+      if (session.credits_left < j.cost_seconds) throw new Error(`This video needs ${j.cost_seconds} credits and ${session.credits_left} are left. Pick a shorter length.`);
+      session.credits_left -= j.cost_seconds;
+    }
     j.state = "matching";
     const seed = opts?.newSeed ? Math.floor(Math.random() * 1e6) : j.preview?.seed ?? 1;
     void (async () => {
@@ -210,7 +221,8 @@ export const mockApi: Api = {
       const src = sourceOf(j.params);
       const ref = j.params.characters[0] ? uploads.get(j.params.characters[0].upload_id)!.thumb_url : src.thumb;
       j.preview = { frame_url: src.thumb, reference_url: ref, seed, prompt_summary: summary(j.params) };
-      j.state = "awaiting_approval";
+      j.state = j.auto ? "queued" : "awaiting_approval";
+      if (j.auto) void runRender(jobId);
     })();
     return { ...j };
   },
@@ -233,7 +245,7 @@ export const mockApi: Api = {
   async cancel(jobId) {
     const j = jobs.get(jobId)!;
     if (j.state !== "done") {
-      if (["queued", "rendering", "finishing"].includes(j.state)) session.credits_left += j.cost_seconds;
+      if (["queued", "rendering", "finishing"].includes(j.state) || (j.auto && j.state === "matching")) session.credits_left += j.cost_seconds;
       j.state = "cancelled";
       j.error = { message: "Cancelled.", refunded: true };
     }

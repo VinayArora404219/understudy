@@ -4,14 +4,16 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { Job, JobProgress } from "../api/types";
 import { CompareSlider } from "../components/CompareSlider";
+import { PersonThumb } from "../components/PeoplePicker";
 import { aspectOf, Button, Card, cx, formatEta, Pill, Spinner } from "../components/ui";
 import { PreviewStep } from "./CreatePage";
 
 const ACTIVE = new Set(["queued", "rendering", "finishing", "matching"]);
 
-/** Before approval (or after a failed preview, which costs nothing) the job is still a preview. */
-const isPreview = (j: Job) =>
-  ["draft", "matching", "awaiting_approval"].includes(j.state) || (j.state === "failed" && !j.error?.refunded && !j.result);
+/** Before approval (or after a failed preview, which costs nothing) the job is still a draft to look at. A job made
+ *  straight to the video has no draft: it is in progress from the start. */
+const isPreview = (j: Job) => !j.auto &&
+  (["draft", "matching", "awaiting_approval"].includes(j.state) || (j.state === "failed" && !j.error?.refunded && !j.result));
 
 export function JobPage() {
   const { id = "" } = useParams();
@@ -44,11 +46,12 @@ function StatePill({ job }: { job: Job }) {
   if (job.state === "cancelled") return <Pill>Cancelled</Pill>;
   if (job.state === "awaiting_approval") return <Pill tone="warn">Waiting for your approval</Pill>;
   if (job.state === "draft") return <Pill>Not started</Pill>;
-  if (job.state === "matching") return <Pill tone="accent"><Spinner className="h-3 w-3" /> Building preview</Pill>;
+  if (job.state === "matching") return <Pill tone="accent"><Spinner className="h-3 w-3" /> {job.auto ? "Getting ready" : "Building preview"}</Pill>;
   return <Pill tone="accent"><Spinner className="h-3 w-3" /> In progress</Pill>;
 }
 
 const STAGES: [JobProgress["stage"], string][] = [
+  ["dressing", "Putting on the new clothes"],
   ["waiting_for_gpu", "Waiting for a GPU"],
   ["starting_gpu", "Starting the GPU"],
   ["loading_models", "Loading the models"],
@@ -63,18 +66,37 @@ function InProgress({ job }: { job: Job }) {
     qc.invalidateQueries({ queryKey: ["session"] });
   } });
   const p = job.progress;
-  const current = p ? STAGES.findIndex(([s]) => s === p.stage) : 0;
+  // the clothes step only for jobs that have one
+  const dressing = !!(job.params.outfits?.some(Boolean) || (job.params.mode === "recast" && job.params.outfit));
+  const stages = STAGES.filter(([s]) => s !== "dressing" || dressing);
+  const current = p ? Math.max(0, stages.findIndex(([s]) => s === p.stage)) : 0;
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,380px)_1fr]">
       <div className="relative self-start overflow-hidden rounded-[var(--radius-card)] border border-ink-700" style={aspectOf(job.aspect)}>
         {job.preview?.first_url
           ? <video src={job.preview.first_url} poster={job.preview.first_frame_url} autoPlay loop muted playsInline aria-label="The start of your video" className="h-full w-full object-cover opacity-60" />
-          : job.preview?.reference_url && <img src={job.preview.reference_url} alt="Starting frame" className="h-full w-full object-cover opacity-60" />}
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-5 text-sm">This is where your video starts.</div>
+          : (job.preview?.reference_url || job.preview?.frame_url)
+            && <img src={job.preview.reference_url ?? job.preview.frame_url} alt="Starting frame" className="h-full w-full object-cover opacity-60" />}
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-5 text-sm">
+          {job.preview?.first_url || job.preview?.reference_url ? "This is where your video starts." : "Who you chose, in your first frame."}</div>
       </div>
       <Card className="self-start p-6">
+        {!!job.preview?.cast?.length && ( // who becomes whom, while it is made
+          <div className="mb-6 flex flex-wrap gap-4 border-b border-ink-700/70 pb-6">
+            {job.preview.cast.map((c) => (
+              <figure key={c.person} className="flex flex-col items-center gap-1">
+                <div className="flex items-center gap-2">
+                  <PersonThumb frameUrl={c.frame_url} box={c.box} className="h-16 w-auto max-w-16" />
+                  <span aria-hidden className="text-ink-500">→</span>
+                  <img src={c.character_url} alt={c.text || "Character"} className="h-16 w-16 rounded-lg object-cover" />
+                </div>
+                <figcaption className="text-xs text-ink-500">Person {c.person}</figcaption>
+              </figure>
+            ))}
+          </div>
+        )}
         <ol className="space-y-4">
-          {STAGES.map(([s, label], i) => (
+          {stages.map(([s, label], i) => (
             <li key={s} className="flex items-center gap-3 text-sm">
               <span className={cx("grid h-6 w-6 place-items-center rounded-full text-[11px] font-semibold",
                 i < current && "bg-accent text-accent-ink", i === current && "bg-ink-100 text-ink-950", i > current && "bg-ink-800 text-ink-500")}>

@@ -83,6 +83,7 @@ uv venv && uv pip install -e ".[dev]"
 (cd web && npm install)
 cp .env.example .env          # set COMFY_BASE_URL to your comfy-api-proxy
 tools/serve_local.sh          # backend on :8780, web app on http://localhost:5180
+python3 tools/add_presets.py   # optional: the example clips as ready-made motions ("Use one of ours")
 ```
 
 The `recast` CLI (`recast run`, `recast match`, `recast styles`) is the first version of the pipeline, on Wan

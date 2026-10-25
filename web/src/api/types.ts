@@ -57,6 +57,7 @@ export interface MotionPreset {
   seconds: number;
   thumb_url: string;
   preview_url: string;
+  credit?: string; // who filmed it
 }
 
 export interface Style {
@@ -89,6 +90,8 @@ export interface JobParams {
   outfit?: { upload_id?: string; text: string }; // jobs made before Restage took one outfit per person
   /** Restage: what each chosen person now wears, left to right; null keeps their own clothes. */
   outfits?: ({ upload_id?: string; text: string } | null)[];
+  /** true: straight to the video, credits held from the start. false: a draft to approve first. */
+  auto?: boolean;
   style?: string;
   place: { mode: PlaceMode; text?: string; upload_id?: string };
   finish: "480p" | "720p" | "1080p";
@@ -158,6 +161,7 @@ export interface Job {
   title: string; // "Anime Cel · 5 s"
   params: JobParams;
   cost_seconds: number; // credits: 1 credit = 1 second of finished video
+  auto?: boolean; // made straight to the video, without a draft to approve
   aspect?: [number, number]; // delivered width, height: known once the clip is prepared
   inputs?: { label: string; kind: "video" | "image"; thumb_url: string }[]; // what went in, for the result page
   preview?: JobPreview;

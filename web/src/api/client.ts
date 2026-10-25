@@ -6,6 +6,8 @@ export interface Api {
   /** Open a judge link: the server keeps it in a cookie from then on. */
   claimLink(token: string): Promise<{ kind: "judge"; name: string }>;
   presets(): Promise<MotionPreset[]>;
+  /** A ready-made motion, as the visitor's own upload: the rest of the flow is the same as for their clip. */
+  usePreset(id: string): Promise<Upload>;
   styles(): Promise<Style[]>;
   gallery(): Promise<GalleryItem[]>;
   upload(file: File, kind: "video" | "image"): Promise<Upload>;
@@ -54,6 +56,7 @@ const live: Api = {
   session: () => call("/session"),
   claimLink: (token) => call("/links/claim", { method: "POST", body: JSON.stringify({ token }) }),
   presets: () => call("/presets"),
+  usePreset: (id) => call(`/presets/${id}/use`, { method: "POST" }),
   styles: () => call("/styles"),
   gallery: () => call("/gallery"),
   upload: (file, kind) => {

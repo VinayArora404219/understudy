@@ -46,6 +46,7 @@ interface Change {
   outfits: (OutfitSlot | undefined)[]; // Restage: one per chosen person, left to right; empty keeps their clothes
   finish: JobParams["finish"];
   audio: JobParams["audio"];
+  draft: boolean; // over 5 s only: a draft (the first 5 s, or the start picture) to approve before the video
 }
 
 export function CreatePage() {
@@ -54,7 +55,7 @@ export function CreatePage() {
   const [mode, setMode] = useState<Mode>(initial);
   const [step, setStep] = useState<Step>("motion");
   const [motion, setMotion] = useState<Motion>({ start: 0, length: 5, picks: [] });
-  const [change, setChange] = useState<Change>({ outfits: [], characters: [], place: { mode: "keep", text: "" }, finish: "720p", audio: "original" });
+  const [change, setChange] = useState<Change>({ draft: false, outfits: [], characters: [], place: { mode: "keep", text: "" }, finish: "720p", audio: "original" });
   const [job, setJob] = useState<Job>();
   const { data: session } = useQuery({ queryKey: ["session"], queryFn: () => api.session() });
 
@@ -95,9 +96,11 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
 }) {
   const [tab, setTab] = useState<"mine" | "ours">(motion.preset ? "ours" : "mine");
   const presets = useQuery({ queryKey: ["presets"], queryFn: () => api.presets() });
-  const up = useMutation({ mutationFn: (f: File) => api.upload(f, "video"),
-    onSuccess: (u) => setMotion({ ...motion, upload: u, preset: undefined, start: 0, people: undefined, picks: [],
-      length: Math.max(SHORTEST, Math.min(5, Math.floor(u.info.seconds ?? 5))) }) });
+  const fresh = (u: Upload, preset?: MotionPreset): Motion => ({ ...motion, upload: u, preset, start: 0, people: undefined,
+    picks: [], length: Math.max(SHORTEST, Math.min(5, Math.floor(u.info.seconds ?? 5))) });
+  const up = useMutation({ mutationFn: (f: File) => api.upload(f, "video"), onSuccess: (u) => setMotion(fresh(u)) });
+  // a ready-made motion becomes the visitor's own upload, so who is in it is chosen the same way
+  const pick = useMutation({ mutationFn: (p: MotionPreset) => api.usePreset(p.id), onSuccess: (u, p) => setMotion(fresh(u, p)) });
   const blocked = motion.upload?.checks.some((c) => c.level === "block");
   const clipSeconds = motion.upload?.info.seconds ?? motion.preset?.seconds ?? 0;
   const ready = (motion.upload && !blocked) || motion.preset;
@@ -153,16 +156,20 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           {presets.isLoading && [0, 1, 2].map((i) => <div key={i} className="skeleton aspect-[9/16] rounded-[var(--radius-card)]" />)}
           {presets.data?.map((p) => (
-            <button key={p.id} onClick={() => setMotion({ ...motion, preset: p, upload: undefined, start: 0, length: 5, people: undefined, picks: [] })}
-              className={cx("overflow-hidden rounded-[var(--radius-card)] border text-left transition",
+            <button key={p.id} onClick={() => pick.mutate(p)} disabled={pick.isPending}
+              className={cx("relative overflow-hidden rounded-[var(--radius-card)] border text-left transition",
                 motion.preset?.id === p.id ? "border-accent ring-2 ring-accent/40" : "border-ink-700 hover:border-ink-500")}>
               <img src={p.thumb_url} alt="" className="aspect-[9/16] w-full object-cover" />
+              {pick.isPending && pick.variables?.id === p.id && <span className="absolute inset-0 grid place-items-center bg-black/40"><Spinner /></span>}
               <div className="p-3">
-                <div className="text-sm font-medium">{p.title}</div>
+                <div className="text-sm font-medium">{p.title} <span className="font-normal text-ink-500">· {Math.round(p.seconds)} s</span></div>
                 <div className="text-xs text-ink-500">{p.subtitle}</div>
+                {p.credit && <div className="mt-1 text-[11px] text-ink-500">Filmed by {p.credit}</div>}
               </div>
             </button>
           ))}
+          {presets.data?.length === 0 && <p className="col-span-full text-sm text-ink-500">No ready-made motions on this server yet. Use your own clip.</p>}
+          {pick.isError && <p className="col-span-full text-sm text-bad">{(pick.error as Error).message}</p>}
         </div>
       )}
 
@@ -267,6 +274,7 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
   mode: Mode; change: Change; setChange: (c: Change) => void; motion: Motion; onBack: () => void; onPreview: (j: Job) => void;
 }) {
   const qc = useQueryClient();
+  const nav = useNavigate();
   const performers = performersOf(mode, motion);
   const two = performers === 2;
   const many = performers > ELSEWHERE_MAX; // only the clip's own place
@@ -285,6 +293,12 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
     : placeModes.some(([m]) => m === change.place.mode) ? change.place : { ...change.place, mode: "keep" as PlaceMode };
   const style = mode === "swap" ? undefined : change.style;
   const characters = mode === "recast" ? filled : [];
+  // Over 5 s, a draft can come first; shorter, the video is made straight away (its draft would be all of it)
+  const clip = motion.upload?.info.seconds ?? motion.preset?.seconds;
+  const cost = clip ? Math.min(motion.length, Math.floor(clip)) : motion.length;
+  const longer = cost > 5;
+  const draft = longer && change.draft;
+  const clipPlace = mode !== "restyle" && place.mode === "keep"; // its draft is the video's real first 5 s
   // Restage: an outfit or nothing for each chosen person; one with only a picture still needs its words
   const outfits = mode === "swap" ? Array.from({ length: performers }, (_, i) => change.outfits[i]) : [];
   const given = outfits.filter((o): o is OutfitSlot => !!o && (!!o.upload || !!o.text.trim()));
@@ -323,11 +337,16 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
         outfits: mode === "swap" ? outfits.map((o) => (o && o.text.trim() ? { upload_id: o.upload?.id, text: o.text } : null)) : undefined,
         finish: change.finish,
         audio: change.audio,
+        auto: !draft,
       };
       const j = await api.createJob(params);
       return api.requestPreview(j.id);
     },
-    onSuccess: (j) => { qc.invalidateQueries({ queryKey: ["jobs"] }); onPreview(j); },
+    onSuccess: (j) => {
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["session"] });
+      if (j.auto) nav(`/jobs/${j.id}`); else onPreview(j);
+    },
   });
 
   const placeEditor = (
@@ -425,11 +444,23 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
         <p className="mt-3 text-xs text-ink-500">The model renders at 480p, 16 fps. 720p and 1080p are upscaled, and labelled so.</p>
       </Card>
 
+      {longer && (
+        <label className="flex items-start gap-3 text-sm text-ink-300">
+          <input type="checkbox" checked={change.draft} onChange={(e) => setChange({ ...change, draft: e.target.checked })}
+            className="mt-1 accent-[var(--color-accent)]" />
+          <span>{clipPlace ? "Make a 5 s draft first" : "Check the start picture first"}
+            <span className="block text-xs text-ink-500">{clipPlace
+              ? "The first 5 seconds, rendered for real, free. You approve it before the whole video is made."
+              : "The picture the video starts from, free. You approve it before the video is made."}
+              {" "}Off: the whole video is made straight away.</span></span>
+        </label>
+      )}
       {start.isError && <p className="text-sm text-bad">{(start.error as Error).message}</p>}
       <div className="flex items-center justify-between">
         <Button variant="ghost" onClick={onBack}>Back</Button>
         <Button variant="primary" size="lg" disabled={!ready || start.isPending} onClick={() => start.mutate()}>
-          {start.isPending ? <><Spinner /> Starting…</> : "Make a preview"}
+          {start.isPending ? <><Spinner /> Starting…</> : draft ? (clipPlace ? "Make the draft" : "Make the start picture")
+            : `Make the video · ${cost} credit${cost === 1 ? "" : "s"}`}
         </Button>
       </div>
       {!ready && <p className="text-right text-sm text-ink-500">{missing}</p>}
@@ -630,7 +661,7 @@ function Summary({ mode, motion, change, creditsLeft }: { mode: Mode; motion: Mo
   const styles = useQuery({ queryKey: ["styles"], queryFn: () => api.styles() });
   const rows = useMemo(() => {
     const r: [string, string][] = [];
-    r.push(["Motion", motion.upload ? `Your clip · ${motion.length} s` : motion.preset ? `${motion.preset.title} · ${motion.length} s` : "Not chosen"]);
+    r.push(["Motion", motion.preset ? `${motion.preset.title} · ${motion.length} s` : motion.upload ? `Your clip · ${motion.length} s` : "Not chosen"]);
     r.push(["Mode", MODES.find(([m]) => m === mode)?.[1] ?? mode]);
     const chosen = chosenOf(motion);
     const of = motion.people ? ` of ${motion.people.list.length}` : "";

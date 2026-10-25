@@ -123,3 +123,24 @@ def test_the_admin_page_makes_lists_and_revokes_links(app, monkeypatch):
     assert judge.post("/api/links/claim", json={"token": token}).status_code == 404
     admin.post("/api/admin/logout")
     assert admin.get("/api/admin/links").status_code == 401
+
+
+def test_a_ready_made_motion_becomes_the_visitors_own_upload(app, monkeypatch):
+    d = app.PRESETS / "studio_duo"
+    d.mkdir(parents=True)
+    (d / "clip.mp4").write_bytes(b"x")
+    (d / "thumb.jpg").write_bytes(b"x")
+    (d / "preset.json").write_text(json.dumps({"title": "Studio duo", "subtitle": "Two dancers", "seconds": 5.8}))
+    monkeypatch.setattr(app, "_describe_video", lambda raw, d: {"thumb_url": "", "url": "", "checks": [],
+                                                                 "info": {"seconds": 5.8}})
+    guest = TestClient(app.app)
+    listed = guest.get("/api/presets").json()  # the landing page may show them
+    assert [p["id"] for p in listed] == ["studio_duo"] and guest.get(listed[0]["thumb_url"]).status_code == 200
+    assert guest.post("/api/presets/studio_duo/use").status_code == 401  # using one needs a link
+    a, la = _client(app, "Judge A")
+    b, _ = _client(app, "Judge B")
+    mine = a.post("/api/presets/studio_duo/use").json()
+    assert a.post("/api/presets/studio_duo/use").json()["id"] == mine["id"]  # one copy each, people found once
+    assert b.post("/api/presets/studio_duo/use").json()["id"] != mine["id"]
+    assert b.get(f"/api/uploads/{mine['id']}").status_code == 404
+    assert a.post("/api/presets/..%2Fjobs/use").status_code == 404

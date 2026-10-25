@@ -165,6 +165,12 @@ def _cancelled(j: dict) -> bool:
         return j["state"] == "cancelled"
 
 
+def _charged(j: dict) -> bool:
+    """Whether a job holds its credits: once its render is queued, or from the start when it goes straight to
+    the video without a draft to approve. Failed and cancelled jobs give them back."""
+    return j["state"] in CHARGED or (bool(j.get("auto")) and j["state"] == "matching")
+
+
 def _cost(j: dict) -> int:
     """A job's credits; jobs from before credits were charged in renders of 5 s."""
     return j["cost_seconds"] if "cost_seconds" in j else j.get("cost_renders", 0) * 5
@@ -174,7 +180,7 @@ def _credits_left() -> int:
     """Credits left on this server, and within the current link's own cap."""
     me = _OWNER.get()
     with LOCK:
-        charged = [j for j in JOBS.values() if j["state"] in CHARGED]
+        charged = [j for j in JOBS.values() if _charged(j)]
     left = CREDITS_TOTAL - sum(_cost(j) for j in charged)
     link = LINKS.get(me)
     if link:
@@ -922,7 +928,8 @@ def run_preview(j: dict, seed: int) -> None:
     if _cancelled(j):
         return
     first, reuse = {}, None
-    if kind == "cast":  # the reference is a sheet of cut-outs: show the video's real start instead
+    # The draft is the video's first chunk. Going straight to a longer video, the render draws it anyway.
+    if kind == "cast" and (not j.get("auto") or work["segments"] == 1):  # the video's real start, as the draft
         # the first preview renders with the render's own seed; "Try another version" brings a new one
         engine["seed"] = seed if seed != 1 else (p.get("seed") or graph.DEFAULT_SEED)
         first, reuse = _first_chunk(j, {**work, **engine, "reference": ref.name}, d, p, ref)
@@ -932,10 +939,14 @@ def run_preview(j: dict, seed: int) -> None:
     if engine.get("engine") == "vace" and mine.get("edited"):  # edited while the still was being drawn
         engine["scene"] = mine["text"]
     shown = _picked_frame(work, d, frame)
-    _update(j, state="awaiting_approval", error=None, progress=None,
+    auto = bool(j.get("auto"))
+    _update(j, state="queued" if auto else "awaiting_approval", error=None,
+            progress={"stage": "waiting_for_gpu", "eta_seconds": work["segments"] * 520} if auto else None,
             _work={**work, "reference": ref.name, "edited": False, **engine, "first": reuse},
             preview={"frame_url": _url(shown), "reference_url": _url(ref), "seed": seed, "kind": kind,
                      "prompt_summary": _summary(p), "notes": notes, "seen": seen, **first})
+    if auto:  # nothing to approve: on to the video (a one-chunk video is the chunk just drawn)
+        _enqueue("render", j["id"], None)
 
 
 def run_render(j: dict, _arg: Any = None) -> None:
@@ -1250,7 +1261,7 @@ def _worker(lane: str) -> None:
             log.exception("%s %s failed", kind, jid)
             if not _cancelled(j):
                 _update(j, state="failed", progress=None,
-                        error={"message": _friendly(e), "refunded": kind == "render"})
+                        error={"message": _friendly(e), "refunded": kind == "render" or bool(j.get("auto"))})
 
 
 # ------------------------------------------------------------------ http
@@ -1273,7 +1284,8 @@ async def _who(request: Request, call_next):
     link = LINKS.find(request.cookies.get(COOKIE, ""))
     owner = link["id"] if link else ("" if LINKS_ON else LOCAL)  # "": a visitor without a link, owns nothing
     path = request.url.path
-    if (owner == "" and path.startswith("/api/") and path not in OPEN_API and not path.startswith("/api/files/gallery/")
+    if (owner == "" and path.startswith("/api/") and path not in OPEN_API
+            and not path.startswith(("/api/files/gallery/", "/api/files/presets/"))
             and not path.startswith("/api/admin/")):  # the admin routes check their own sign-in
         return JSONResponse({"message": "Open the link you were sent to use this demo."}, status_code=401)
     token = _OWNER.set(owner)
@@ -1409,9 +1421,41 @@ def admin_revoke_link(link_id: str, request: Request) -> dict:
         raise HTTPException(404, "No such link.") from None
 
 
+PRESETS = DATA / "presets"  # ready-made motions: <id>/clip.mp4, thumb.jpg, preset.json (tools/add_presets.py)
+
+
 @app.get("/api/presets")
 def presets() -> list:
-    return []  # ready-made motions ship once cleared clips exist
+    out = []
+    for f in sorted(PRESETS.glob("*/preset.json")):
+        meta, d = json.loads(f.read_text()), f.parent
+        out.append({"id": d.name, "title": meta["title"], "subtitle": meta["subtitle"], "credit": meta.get("credit", ""),
+                    "seconds": meta["seconds"], "thumb_url": _url(d / "thumb.jpg"), "preview_url": _url(d / "clip.mp4")})
+    return out
+
+
+@app.post("/api/presets/{pid}/use")
+def use_preset(pid: str) -> dict:
+    """A ready-made motion becomes the visitor's own upload, so everything after (who is in it, the render)
+    works as for a clip they filmed. One copy per visitor and motion, so its people are found once."""
+    src = PRESETS / pid
+    if not pid.replace("_", "").isalnum() or not (src / "preset.json").exists():
+        raise HTTPException(404, "That motion is gone.")
+    me = _OWNER.get() or LOCAL
+    with LOCK:
+        mine = next((u for u in UPLOADS.values() if u.get("_preset") == pid and u.get("_owner", LOCAL) == me), None)
+    if mine:
+        return _public(mine)
+    uid = _new_id("up")
+    d = DATA / "uploads" / uid
+    d.mkdir(parents=True)
+    raw = Path(shutil.copy(src / "clip.mp4", d / "original.mp4"))
+    u = {"id": uid, "kind": "video", "_file": raw.relative_to(DATA).as_posix(), "_owner": me, "_preset": pid,
+         **_describe_video(raw, d)}
+    _write_json(d / "upload.json", u)
+    with LOCK:
+        UPLOADS[uid] = u
+    return _public(u)
 
 
 @app.get("/api/styles")
@@ -1542,7 +1586,7 @@ def files(path: str):
     # only an upload's or a job's files, and only to whoever owns them; the gallery is public
     top, name = (p.relative_to(DATA).parts + ("", ""))[:2]
     owner = UPLOADS.get(name) if top == "uploads" else JOBS.get(name) if top == "jobs" else None
-    if top != "gallery" and (owner is None or not _mine(owner)):
+    if top not in ("gallery", "presets") and (owner is None or not _mine(owner)):
         raise HTTPException(404, "Not found.")
     return FileResponse(p)
 
@@ -1734,11 +1778,15 @@ def create_job(params: dict) -> dict:
         raise UserError("Unknown shape.")
     if params.get("finish") not in ("480p", "720p", "1080p") or params.get("audio") not in ("original", "mute"):
         raise UserError("Unknown finish or sound option.")
+    auto = params.pop("auto", False)
+    if not isinstance(auto, bool):
+        raise UserError("Say whether to make a draft first.")
     jid = _new_id("job")
     _job_dir(jid).mkdir(parents=True)
     j = {"id": jid, "created_at": datetime.now(timezone.utc).isoformat(), "state": "draft",
          "title": _title(params), "params": params,
          "cost_seconds": max(1, round(_covered(params, _plan(params, usable)) / FPS)),
+         "auto": auto,  # straight to the video: no draft to approve, credits held from the start
          "_owner": _OWNER.get() or LOCAL}
     with LOCK:
         JOBS[jid] = j
@@ -1761,6 +1809,11 @@ def preview(jid: str, body: dict | None = None) -> dict:
             raise HTTPException(409, "This render is already under way.")
         new_seed = bool((body or {}).get("new_seed"))
         seed = random.randrange(1, 2**31) if new_seed else (j.get("preview") or {}).get("seed", 1)
+        if j.get("auto"):  # straight to the video: its credits are held from now
+            left = _credits_left()
+            if left < _cost(j):
+                raise HTTPException(402, f"This video needs {_cost(j)} credits and {left} are left. "
+                                         "Pick a shorter length.")
         _update(j, state="matching", error=None)
     _enqueue("preview", jid, seed)
     return _public(j)

@@ -10,6 +10,7 @@ CASES.json is a list of cases (media paths stay outside git):
      "place_text": "...", "place_image": "room.png",
      "style": "Anime Cel",                                              # restyle
      "outfits": {"2": {"text": "a red jacket", "image": "jacket.png"}},  # Restage: per chosen person; optional place
+     "draft": false,                   # over 5 s: approve a draft first; then "render", "reroll" apply
      "render": true, "reroll": false, "cancel": false}
 
 Writes OUT_DIR/report.json (one entry per case: what happened at each step, the job's final state, page
@@ -136,41 +137,48 @@ def run_case(page: Page, base: str, case: dict, out: Path) -> dict:
                 page.get_by_role("button", name=re.compile(r"^Place")).click()
                 fill_place(page, {**case, "mode": "swap"}, False)
         step("choices")
-        page.get_by_role("button", name="Make a preview").click()
-        page.wait_for_selector("text=Does this look right?", timeout=120_000)
-        page.wait_for_timeout(15_000)
-        step("preview_waiting")  # what the visitor sees while the preview is made
-        try:  # and once the GPU is on it, if the page shows steps (the clip's place)
-            page.wait_for_function("() => /step \\d of/i.test(document.body.innerText)", timeout=600_000)
-            step("preview_rendering")
-        except Exception:
-            pass
+        if not case.get("draft"):  # the default: straight to the video, nothing to approve
+            page.get_by_role("button", name=re.compile(r"^Make the video")).click()
+            page.wait_for_url(re.compile(r"/jobs/"), timeout=120_000)
+            result["job"] = page.url.rstrip("/").rsplit("/", 1)[-1]
+            page.wait_for_timeout(15_000)
+            step("making")
+        else:  # over 5 s: a draft (the first 5 s, or the start picture) to approve first
+            page.get_by_label(re.compile(r"^(Make a 5 s draft first|Check the start picture first)")).check()
+            page.get_by_role("button", name=re.compile(r"^Make the (draft|start picture)")).click()
+            page.wait_for_selector("text=Does this look right?", timeout=120_000)
+            page.wait_for_timeout(15_000)
+            step("preview_waiting")  # what the visitor sees while the draft is made
+            try:  # and once the GPU is on it, if the page shows steps (the clip's place)
+                page.wait_for_function("() => /step \\d of/i.test(document.body.innerText)", timeout=600_000)
+                step("preview_rendering")
+            except Exception:
+                pass
 
-        def preview_done(label: str) -> bool:
-            page.wait_for_function(
-                "() => [...document.querySelectorAll('button')].some(b => /^(Render video|Keep this video)/.test(b.textContent) && !b.disabled)"
-                " || document.body.innerText.includes(\"didn't finish\") || !!document.querySelector('.text-bad')",
-                timeout=PREVIEW_TIMEOUT)
-            ok = page.evaluate("() => [...document.querySelectorAll('button')].some(b => /^(Render video|Keep this video)/.test(b.textContent) && !b.disabled)")
-            step(label, ok=ok, text=page.locator("section").first.inner_text()[:1500])
-            return ok
+            def preview_done(label: str) -> bool:
+                page.wait_for_function(
+                    "() => [...document.querySelectorAll('button')].some(b => /^(Render video|Keep this video)/.test(b.textContent) && !b.disabled)"
+                    " || document.body.innerText.includes(\"didn't finish\") || !!document.querySelector('.text-bad')",
+                    timeout=PREVIEW_TIMEOUT)
+                ok = page.evaluate("() => [...document.querySelectorAll('button')].some(b => /^(Render video|Keep this video)/.test(b.textContent) && !b.disabled)")
+                step(label, ok=ok, text=page.locator("section").first.inner_text()[:1500])
+                return ok
 
-        if not preview_done("preview"):
-            result["outcome"] = "preview failed"
-            return result
-        if case.get("reroll"):
-            page.get_by_role("button", name="Try another version").click()
-            page.wait_for_timeout(2000)
-            if not preview_done("preview_again"):
-                result["outcome"] = "re-roll failed"
+            if not preview_done("preview"):
+                result["outcome"] = "preview failed"
                 return result
-        jobs = page.request.get(f"{base}/api/jobs").json()
-        result["job"] = jobs[0]["id"]
-        if not case.get("render"):
-            result["outcome"] = "preview ok"
-            return result
-        page.get_by_role("button", name=re.compile(r"^(Render video|Keep this video)")).click()
-        page.wait_for_url(re.compile(r"/jobs/"), timeout=60_000)
+            if case.get("reroll"):
+                page.get_by_role("button", name="Try another version").click()
+                page.wait_for_timeout(2000)
+                if not preview_done("preview_again"):
+                    result["outcome"] = "re-roll failed"
+                    return result
+            result["job"] = page.request.get(f"{base}/api/jobs").json()[0]["id"]
+            if not case.get("render"):
+                result["outcome"] = "preview ok"
+                return result
+            page.get_by_role("button", name=re.compile(r"^(Render video|Keep this video)")).click()
+            page.wait_for_url(re.compile(r"/jobs/"), timeout=60_000)
         if case.get("cancel"):
             page.wait_for_timeout(20_000)
             page.get_by_role("button", name="Cancel and refund").click()
@@ -180,7 +188,7 @@ def run_case(page: Page, base: str, case: dict, out: Path) -> dict:
         final = page.request.get(f"{base}/api/jobs/{result['job']}").json()
         step("result", state=final["state"], error=final.get("error"))
         result["outcome"] = final["state"]
-        result["final"] = {k: final.get(k) for k in ("state", "error", "result", "cost_renders", "title")}
+        result["final"] = {k: final.get(k) for k in ("state", "error", "result", "cost_seconds", "title")}
     except Exception as e:  # one case failing must not stop the rest
         result["outcome"] = f"error: {type(e).__name__}: {str(e).splitlines()[0][:300]}"
         try:

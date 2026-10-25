@@ -246,3 +246,24 @@ def test_a_render_costs_the_seconds_it_delivers(app):
     assert cost(20) == 10  # the clip has 10 seconds: only those are charged
     assert cost(1) == cost(21) == cost("5") == 400
     assert app._cost({"cost_renders": 2}) == 10  # jobs from before credits
+
+
+def test_straight_to_the_video_holds_its_credits_from_the_start(app, monkeypatch):
+    c = TestClient(app.app)
+    app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": [{"id": 1}]}}
+    monkeypatch.setattr(app, "_enqueue", lambda *a: None)
+    left = c.get("/api/session").json()["credits_left"]
+    j = c.post("/api/jobs", json=_params([1], auto=True)).json()
+    assert j["auto"] is True and "auto" not in j["params"]
+    c.post(f"/api/jobs/{j['id']}/preview", json={})
+    assert c.get("/api/session").json()["credits_left"] == left - 5  # held while it is being prepared
+    draft = c.post("/api/jobs", json=_params([1])).json()
+    c.post(f"/api/jobs/{draft['id']}/preview", json={})
+    assert c.get("/api/session").json()["credits_left"] == left - 5  # a draft is free until approved
+    app._update(app.JOBS[j["id"]], state="failed", error={"message": "x", "refunded": True})
+    assert c.get("/api/session").json()["credits_left"] == left  # given back
+    monkeypatch.setattr(app, "CREDITS_TOTAL", 3)
+    big = c.post("/api/jobs", json=_params([1], auto=True)).json()
+    r = c.post(f"/api/jobs/{big['id']}/preview", json={})
+    assert r.status_code == 402 and "needs 5 credits" in r.json()["message"]
+    assert c.post("/api/jobs", json=_params([1], auto="yes")).status_code == 400
