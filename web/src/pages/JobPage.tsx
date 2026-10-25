@@ -34,7 +34,7 @@ export function JobPage() {
       </div>
       {isPreview(job) ? <PreviewStep job={job} onBack={() => nav("/create")} backLabel="Start a new one" />
         : job.state === "done" && job.result ? <Result job={job} />
-        : job.state === "failed" || job.state === "cancelled" ? <Failed job={job} />
+        : job.state === "failed" || job.state === "cancelled" ? <FailedWithChoices job={job} />
         : <InProgress job={job} />}
     </div>
   );
@@ -83,7 +83,8 @@ function InProgress({ job }: { job: Job }) {
           {job.preview?.first_url || (start && !sheet && start === job.preview?.reference_url)
             ? "This is where your video starts." : "Who you chose, in your first frame."}</div>
       </div>
-      <Card className="self-start p-6">
+      <div className="space-y-6 self-start">
+      <Card className="p-6">
         {!!job.preview?.cast?.length && ( // who becomes whom, while it is made
           <div className="mb-6 flex flex-wrap gap-4 border-b border-ink-700/70 pb-6">
             {job.preview.cast.map((c) => (
@@ -126,7 +127,50 @@ function InProgress({ job }: { job: Job }) {
           <Button variant="danger" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate()}>Cancel and refund</Button>
         </div>
       </Card>
+      <Choices job={job} />
+      </div>
     </div>
+  );
+}
+
+const MODE_NAMES: Record<string, string> = { recast: "Recast", restyle: "Restyle", swap: "Restage" };
+
+/** What the visitor chose for this video: the pictures, then every setting in words. */
+function Choices({ job, className }: { job: Job; className?: string }) {
+  const { data: styles } = useQuery({ queryKey: ["styles"], queryFn: () => api.styles() });
+  const p = job.params;
+  const rows: [string, string][] = [["Mode", MODE_NAMES[p.mode] ?? p.mode], ["Length", `${p.motion.length} s`]];
+  const chars = p.characters ?? [];
+  chars.forEach((c, i) => rows.push([chars.length === 1 ? "Character" : chars.length === 2 ? (i ? "Right" : "Left") : `Character ${i + 1}`, c.text]));
+  const outfits = p.outfits ?? (p.outfit ? [p.outfit] : []);
+  outfits.forEach((o, i) => o && rows.push([outfits.length === 1 ? "Outfit" : `Outfit, person ${i + 1} from the left`, o.text]));
+  if (p.style) rows.push(["Look", styles?.find((x) => x.key === p.style)?.name ?? p.style]);
+  if (p.mode !== "restyle") {
+    rows.push(["Place", p.place.mode === "keep" ? "Your clip's own" : p.place.mode === "describe" ? p.place.text ?? "Described"
+      : p.place.mode === "character" ? "The character's photo" : "From your picture"]);
+  }
+  rows.push(["Quality", p.finish === "480p" ? "480p native" : `${p.finish} (upscaled)`]);
+  rows.push(["Sound", p.audio === "mute" ? "Muted" : "Your clip's own"]);
+  rows.push(["Made", job.auto ? "Straight away" : "From a draft you approved"]);
+  return (
+    <Card className={cx("self-start p-5", className)}>
+      <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-500">Your choices</h2>
+      {!!job.inputs?.length && (
+        <div className="mt-3 flex flex-wrap gap-3">
+          {job.inputs.map((x, i) => (
+            <figure key={i} className="w-[72px]">
+              <img src={x.thumb_url} alt={x.label} className="h-[72px] w-[72px] rounded-xl border border-ink-700 object-cover" />
+              <figcaption className="mt-1 truncate text-center text-[11px] text-ink-500">{x.label}</figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
+      <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+        {rows.map(([k, v], i) => (
+          <div key={i} className="contents"><dt className="text-ink-500">{k}</dt><dd className="text-ink-100">{v}</dd></div>
+        ))}
+      </dl>
+    </Card>
   );
 }
 
@@ -165,19 +209,7 @@ function Result({ job }: { job: Job }) {
       </div>
 
       <aside className="space-y-4">
-        {!!job.inputs?.length && (
-          <Card className="p-5">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-500">Input assets</h2>
-            <div className="mt-3 flex flex-wrap gap-3">
-              {job.inputs.map((x, i) => (
-                <figure key={i} className="w-[72px]">
-                  <img src={x.thumb_url} alt={x.label} className="h-[72px] w-[72px] rounded-xl border border-ink-700 object-cover" />
-                  <figcaption className="mt-1 truncate text-center text-[11px] text-ink-500">{x.label}</figcaption>
-                </figure>
-              ))}
-            </div>
-          </Card>
-        )}
+        <Choices job={job} />
         <Card className="p-5">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-500">Details</h2>
           <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2.5 text-sm">
@@ -230,6 +262,10 @@ function Failed({ job }: { job: Job }) {
       </div>
     </Card>
   );
+}
+
+function FailedWithChoices({ job }: { job: Job }) {
+  return <div className="grid gap-6 lg:grid-cols-[minmax(0,36rem)_1fr]"><Failed job={job} /><Choices job={job} /></div>;
 }
 
 export function Empty({ title, line, action }: { title: string; line: string; action?: React.ReactNode }) {
