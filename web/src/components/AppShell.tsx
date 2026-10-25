@@ -1,10 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { NavLink, Link, Outlet } from "react-router-dom";
+import { NavLink, Link, Outlet, useLocation } from "react-router-dom";
 import { api } from "../api/client";
 import { cx } from "./ui";
 
 export function AppShell() {
   const { data: session } = useQuery({ queryKey: ["session"], queryFn: () => api.session(), refetchInterval: 15000 });
+  const { pathname } = useLocation();
+  // without a judge link only the landing page and the privacy page are open (server/links.py)
+  const locked = session?.kind === "guest" && !["/", "/privacy"].includes(pathname);
   return (
     <div className="min-h-dvh">
       {api.isMock && (
@@ -38,7 +41,13 @@ export function AppShell() {
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
-        <Outlet />
+        {locked ? (
+          <div className="mx-auto max-w-md py-16 text-center">
+            <h1 className="text-2xl font-semibold tracking-tight">Open your judge link</h1>
+            <p className="mt-3 text-ink-300">This demo opens with the link you were sent. It works on any device, and
+              what you make with it is seen only through it.</p>
+          </div>
+        ) : <Outlet />}
       </main>
       <footer className="border-t border-ink-800">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-6 text-xs text-ink-500 sm:px-6">

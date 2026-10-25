@@ -88,8 +88,8 @@ class MatchParams:
     character2_text: str = ""
     pose: str = ""  # optional, concrete, frame-relative words for what the (left) performer's body does
     pose2: str = ""  # the same for the performer on the right
-    outfit: Any = None  # swap: a garment the performer now wears
-    outfit_text: str = ""
+    outfit: Any = None  # a garment the performer now wears (Restage), or a character (Recast + outfit)
+    outfit_text: str = ""  # what it is; on its own, without an image, the outfit is these words
     product: Any = None  # swap: an object the performer now holds
     product_text: str = ""
     product_hand: str = ""  # "left" | "right": the side of the picture of the hand that stays in view
@@ -167,7 +167,7 @@ class MatchParams:
         if self.scene == "new" and self.location is None and not self.background.strip():
             raise ReferenceError("describe the new background or give a location image")
         if (self.character is None and self.location is None and self.outfit is None and self.product is None
-                and not self.style and self.scene == "keep"):
+                and not self.outfit_text.strip() and not self.style and self.scene == "keep"):
             raise ReferenceError("nothing to change: give a character, a location, a style or a new background")
         if self.props.strip() and self.base == "frame":
             raise ReferenceError("props are for another place: the clip's own frame already has them")
@@ -278,6 +278,8 @@ def prompt_for(p: MatchParams) -> str:
     if "outfit" in sl:
         parts.append(f"The {p.subject} in the first picture now wears the {_noun(p.outfit_text)} shown in the "
                      f"{ORDINAL[sl['outfit']]} picture, fitted to their body.")
+    elif p.outfit_text.strip():  # the outfit in words only (Recast + outfit, typed)
+        parts.append(f"The {p.subject} in the first picture now wears {_clause(p.outfit_text)}, fitted to their body.")
     if "product" in sl:
         # Measured (V5b): the product goes in the hand the performer keeps in view, placed by the
         # side of the picture; elsewhere it vanishes once its hand leaves the frame.
@@ -294,7 +296,7 @@ def prompt_for(p: MatchParams) -> str:
         else:
             parts.append(f"The {p.subject} in the first picture now holds the {noun} shown in the {nth} picture "
                          f"in one hand.")
-    if ("outfit" in sl or "product" in sl) and p.pose.strip():
+    if ("outfit" in sl or "product" in sl or p.outfit_text.strip()) and p.pose.strip():
         parts.append(f"The {p.subject} {_clause(p.pose)}.")  # the item instruction pushes out an abstract pose
     if "location" in sl:
         parts.append(f"Move the scene to the place shown in the {ORDINAL[sl['location']]} picture.")

@@ -148,6 +148,7 @@ async function runRender(jobId: string) {
 export const mockApi: Api = {
   isMock: true,
   async session() { return { ...session }; },
+  async claimLink() { return { kind: "judge" as const, name: session.name }; },
   async presets() { return PRESETS; },
   async styles() { return STYLES; },
   async gallery(): Promise<GalleryItem[]> { return []; },

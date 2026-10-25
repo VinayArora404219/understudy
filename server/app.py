@@ -30,11 +30,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from contextvars import ContextVar
+
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from recast import composite, crop, describe, graph, keep, media, people, pose, prompts, recipe, scail, styles, vace
 from recast import reference as reflib
+
+from .links import LOCAL, Links
 
 log = logging.getLogger("recast.server")
 
@@ -49,6 +53,22 @@ ACTIVE_STATES = {"matching", "queued", "rendering", "finishing"}
 SWATCH = {"anime": ("#7dd3fc", "#f0abfc"), "toy": ("#f9a8d4", "#fde68a"), "pixel": ("#86efac", "#3b82f6"),
           "watercolor": ("#fde2e4", "#bde0fe"), "comic": ("#fde047", "#ef4444"), "neon": ("#d946ef", "#06b6d4"),
           "wool": ("#fdba74", "#a78bfa"), "paper": ("#fcd34d", "#fb7185"), "lowpoly": ("#5eead4", "#6366f1")}
+
+
+# Judge links (server/links.py): with RECAST_LINKS=1 the API answers only someone who opened a link, and each
+# link sees only its own uploads and jobs. Without it (self-hosting), everything belongs to LOCAL.
+LINKS_ON = os.environ.get("RECAST_LINKS", "") == "1"
+LINKS = Links(DATA / "links.json")
+COOKIE = "recast_link"
+OPEN_API = {"/api/session", "/api/links/claim", "/api/gallery", "/api/presets", "/api/styles"}
+# the link id, LOCAL, or "" for a visitor without a link; None only outside a request (a GPU worker)
+_OWNER: "ContextVar[str | None]" = ContextVar("recast_owner", default=None)
+
+
+def _mine(record: dict) -> bool:
+    """Whether the current request may see this upload or job (workers see everything)."""
+    me = _OWNER.get()
+    return me is None or (me != "" and record.get("_owner", LOCAL) == me)
 
 
 class UserError(ValueError):
@@ -131,9 +151,15 @@ def _cancelled(j: dict) -> bool:
 
 
 def _renders_left() -> int:
+    """Renders left on this server, and within the current link's own cap."""
+    me = _OWNER.get()
     with LOCK:
-        used = sum(j["cost_renders"] for j in JOBS.values() if j["state"] in CHARGED)
-    return max(0, RENDERS_TOTAL - used)
+        charged = [j for j in JOBS.values() if j["state"] in CHARGED]
+    left = RENDERS_TOTAL - sum(j["cost_renders"] for j in charged)
+    link = LINKS.get(me)
+    if link:
+        left = min(left, link["cap"] - sum(j["cost_renders"] for j in charged if j.get("_owner", LOCAL) == me))
+    return max(0, left)
 
 
 def _load() -> None:
@@ -163,7 +189,7 @@ def _named(path: Path, stem: str) -> Path:
 def _upload_path(uid: str, kind: str) -> Path:
     """The upload's file: for a video the original, for an image its decoded, metadata-free PNG."""
     u = UPLOADS.get(uid)
-    if u is None or u["kind"] != kind:
+    if u is None or u["kind"] != kind or not _mine(u):
         raise UserError(f"That {kind} upload is missing. Upload it again.")
     raw = DATA / u["_file"]
     return raw.parent / "image.png" if kind == "image" else raw
@@ -1062,6 +1088,22 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(title="Performance Recast (local)", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
 
+@app.middleware("http")
+async def _who(request: Request, call_next):
+    """Who is asking: the link in their cookie, or LOCAL when links are off. With links on, the API answers
+    nobody else, apart from what the landing page needs."""
+    link = LINKS.find(request.cookies.get(COOKIE, ""))
+    owner = link["id"] if link else ("" if LINKS_ON else LOCAL)  # "": a visitor without a link, owns nothing
+    path = request.url.path
+    if owner == "" and path.startswith("/api/") and path not in OPEN_API and not path.startswith("/api/files/gallery/"):
+        return JSONResponse({"message": "Open the link you were sent to use this demo."}, status_code=401)
+    token = _OWNER.set(owner)
+    try:
+        return await call_next(request)
+    finally:
+        _OWNER.reset(token)
+
+
 @app.exception_handler(UserError)
 async def _user_error(_req, e: UserError):
     return JSONResponse({"message": str(e)}, status_code=400)
@@ -1074,7 +1116,26 @@ async def _http_error(_req, e: HTTPException):
 
 @app.get("/api/session")
 def session() -> dict:
+    link = LINKS.get(_OWNER.get())
+    if link:
+        return {"kind": "judge", "name": link["name"], "renders_left": _renders_left(), "renders_total": link["cap"]}
+    if LINKS_ON:  # nobody has opened a link in this browser
+        return {"kind": "guest", "name": "Not signed in", "renders_left": 0, "renders_total": 0}
     return {"kind": "user", "name": "Local GPU", "renders_left": _renders_left(), "renders_total": RENDERS_TOTAL}
+
+
+@app.post("/api/links/claim")
+def claim_link(body: dict, request: Request) -> JSONResponse:
+    """Open a judge link: the browser keeps its token in a cookie, and the API knows them from then on."""
+    token = str((body or {}).get("token") or "")
+    link = LINKS.find(token)
+    if link is None:
+        raise HTTPException(404, "This link doesn't work: it may have expired. Ask for a new one.")
+    out = JSONResponse({"kind": "judge", "name": link["name"]})
+    left = datetime.fromisoformat(link["expires"]) - datetime.now(timezone.utc)
+    https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    out.set_cookie(COOKIE, token, max_age=int(left.total_seconds()), httponly=True, samesite="lax", secure=https)
+    return out
 
 
 @app.get("/api/presets")
@@ -1111,7 +1172,7 @@ async def upload(file: UploadFile = File(...), kind: str = Form(...)) -> dict:
                 shutil.rmtree(d)
                 raise UserError(f"That file is over {media.MAX_UPLOAD_BYTES // 2**20} MB.")
             out.write(chunk)
-    u = {"id": uid, "kind": kind, "_file": raw.relative_to(DATA).as_posix()}
+    u = {"id": uid, "kind": kind, "_file": raw.relative_to(DATA).as_posix(), "_owner": _OWNER.get() or LOCAL}
     try:
         u.update(_describe_video(raw, d) if kind == "video" else _describe_image(raw, d))
     except media.MediaError as e:
@@ -1158,7 +1219,7 @@ def _describe_image(raw: Path, d: Path) -> dict:
 @app.get("/api/uploads/{uid}")
 def get_upload(uid: str) -> dict:
     u = UPLOADS.get(uid)
-    if u is None:
+    if u is None or not _mine(u):
         raise HTTPException(404, "That upload is gone. Upload it again.")
     return _public(u)
 
@@ -1170,7 +1231,7 @@ def describe_upload_request(uid: str, body: dict) -> dict:
     if role not in describe.ROLE_PROMPTS:
         raise UserError("Unknown image role.")
     u = UPLOADS.get(uid)
-    if u is None or u["kind"] != "image":
+    if u is None or u["kind"] != "image" or not _mine(u):
         raise HTTPException(404, "That image is gone. Upload it again.")
     with LOCK:
         if role not in u.get("descriptions", {}) and role not in u.get("describing", []):
@@ -1184,7 +1245,7 @@ def find_people_request(uid: str, body: dict | None = None) -> dict:
     """Queue finding everyone in the start frame; the page polls GET /api/uploads/{uid} for people[key]."""
     body = body or {}
     u = UPLOADS.get(uid)
-    if u is None or u["kind"] != "video":
+    if u is None or u["kind"] != "video" or not _mine(u):
         raise HTTPException(404, "That clip is gone. Upload it again.")
     start = float(body.get("start") or 0)
     if start < 0 or (u.get("info") or {}).get("seconds", 1e9) <= start:
@@ -1207,14 +1268,19 @@ def files(path: str):
     p = (DATA / path).resolve()
     if DATA not in p.parents or not p.is_file() or p.suffix == ".json" and p.name != "recipe.json":
         raise HTTPException(404, "Not found.")
+    # only an upload's or a job's files, and only to whoever owns them; the gallery is public
+    top, name = (p.relative_to(DATA).parts + ("", ""))[:2]
+    owner = UPLOADS.get(name) if top == "uploads" else JOBS.get(name) if top == "jobs" else None
+    if top != "gallery" and (owner is None or not _mine(owner)):
+        raise HTTPException(404, "Not found.")
     return FileResponse(p)
 
 
 def _title(p: dict) -> str:
     chars = _characters(p)
-    what = ("Duo recast" if len(chars) == 2 else "Recast" if chars
+    what = (("Duo recast" if len(chars) == 2 else "Recast") + (", new outfit" if p.get("outfit") else "") if chars
             else styles.get(p["style"]).name if p.get("style")
-            else "Outfit swap" if p.get("outfit") else "Product swap" if p.get("prop") else "Place swap")
+            else "New outfit" if p.get("outfit") else "New place")
     return f"{what} · {p['motion']['length']} s"
 
 
@@ -1225,31 +1291,39 @@ def _check_mode(params: dict, chars: list, place: dict, performers: int) -> None
     if mode == "recast":
         if not chars:
             raise UserError("Recast needs a character image.")
-        if items:
-            raise UserError("Outfits and products are swapped on the performer: use Swap.")
+        if params.get("prop"):
+            raise UserError("Products in hand aren't offered.")
+        if params.get("outfit"):  # the characters, dressed in it (_dressed)
+            _check_outfit(params["outfit"], image_needed=False)
     elif mode == "restyle":
         if not params.get("style"):
             raise UserError("Pick a look.")
         if chars or items or place["mode"] != "keep":
-            raise UserError("Restyle changes only the look. Use Recast or Swap for the rest.")
-    elif mode == "swap":
+            raise UserError("Restyle changes only the look. Use Recast or Restage for the rest.")
+    elif mode == "swap":  # shown as "Restage": you stay you, with a new outfit or in a new place
         if params.get("prop"):  # measured: a held product showed only while its hand stayed in view
-            raise UserError("Swapping a product in hand isn't offered: swap the outfit or the place.")
+            raise UserError("Products in hand aren't offered: change the outfit or the place.")
         if chars or params.get("style"):
-            raise UserError("Swap keeps the performer and the look; it changes one thing.")
+            raise UserError("Restage keeps the performer and the look; it changes one thing.")
         changes = len(items) + (place["mode"] != "keep")
         if changes != 1:
-            raise UserError("Swap one thing at a time: the outfit or the place.")
+            raise UserError("Change one thing at a time: the outfit or the place.")
         if place["mode"] == "character":
             raise UserError("“Where my character is” belongs to Recast.")
         if items and (performers != 1 or params.get("subject") != "person"):
-            raise UserError("An outfit swap needs one person in the clip.")
-        for k in items:
-            _upload_path((params[k] or {}).get("upload_id", ""), "image")
-            if len((params[k].get("text") or "").strip()) < 3:
-                raise UserError(f"Say what the {'product' if k == 'prop' else 'outfit'} is in a few words.")
+            raise UserError("A new outfit needs one person in the clip.")
+        if params.get("outfit"):
+            _check_outfit(params["outfit"], image_needed=True)
     else:
-        raise UserError("Pick Recast, Restyle or Swap.")
+        raise UserError("Pick Recast, Restyle or Restage.")
+
+
+def _check_outfit(outfit: dict, *, image_needed: bool) -> None:
+    """An outfit is words, with or without a picture of it (Restage needs the picture)."""
+    if outfit.get("upload_id") or image_needed:
+        _upload_path(outfit.get("upload_id", ""), "image")
+    if not 3 <= len((outfit.get("text") or "").strip()) <= reflib.MAX_TEXT:
+        raise UserError("Say what the outfit is in a few words.")
 
 
 CLEAR = 0.25  # of the biggest person's area: smaller is a passer-by or a ball, never chosen for the visitor
@@ -1341,7 +1415,8 @@ def create_job(params: dict) -> dict:
     jid = _new_id("job")
     _job_dir(jid).mkdir(parents=True)
     j = {"id": jid, "created_at": datetime.now(timezone.utc).isoformat(), "state": "draft",
-         "title": _title(params), "params": params, "cost_renders": SEGMENTS[m["length"]]}
+         "title": _title(params), "params": params, "cost_renders": SEGMENTS[m["length"]],
+         "_owner": _OWNER.get() or LOCAL}
     with LOCK:
         JOBS[jid] = j
         _update(j)
@@ -1350,7 +1425,7 @@ def create_job(params: dict) -> dict:
 
 def _get(jid: str) -> dict:
     j = JOBS.get(jid)
-    if j is None:
+    if j is None or not _mine(j):
         raise HTTPException(404, "This render does not exist.")
     return j
 
@@ -1449,4 +1524,4 @@ def job(jid: str) -> dict:
 @app.get("/api/jobs")
 def job_list() -> list:
     with LOCK:
-        return [_public(j) for j in sorted(JOBS.values(), key=lambda j: j["created_at"], reverse=True)]
+        return [_public(j) for j in sorted(JOBS.values(), key=lambda j: j["created_at"], reverse=True) if _mine(j)]

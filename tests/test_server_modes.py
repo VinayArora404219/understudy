@@ -30,6 +30,8 @@ ITEM = {"upload_id": "img", "text": "a red jacket"}
     _params(characters=CHAR),
     _params(characters=CHAR, style="anime", place={"mode": "describe", "text": "a castle"}),
     _params(mode="restyle", style="anime"),
+    _params(characters=CHAR, outfit=ITEM),  # Recast + outfit: the characters dressed in it
+    _params(characters=CHAR, outfit={"text": "matching silver sequin jackets"}),  # words alone are enough
     _params(mode="swap", outfit=ITEM),
     _params(mode="swap", place={"mode": "describe", "text": "a beach"}),
     _params(mode="swap", performers=2, subject="animal", place={"mode": "describe", "text": "a beach"}),
@@ -40,16 +42,18 @@ def test_each_mode_accepts_its_own_change(uploads, params):
 
 @pytest.mark.parametrize("params,why", [
     (_params(), "needs a character"),
-    (_params(characters=CHAR, outfit=ITEM), "use Swap"),
+    (_params(characters=CHAR, prop=ITEM), "Products in hand"),
+    (_params(characters=CHAR, outfit={"text": "x"}), "a few words"),
     (_params(mode="restyle"), "Pick a look"),
     (_params(mode="restyle", style="anime", place={"mode": "describe", "text": "a castle"}), "only the look"),
-    (_params(mode="swap", prop=ITEM), "product in hand isn't offered"),
+    (_params(mode="swap", prop=ITEM), "Products in hand aren't offered"),
+    (_params(mode="swap", outfit={"text": "a red jacket"}), "missing"),  # Restage dresses from a picture
     (_params(mode="swap", outfit=ITEM, place={"mode": "describe", "text": "a beach"}), "one thing at a time"),
     (_params(mode="swap"), "one thing at a time"),
     (_params(mode="swap", style="anime", outfit=ITEM), "changes one thing"),
     (_params(mode="swap", subject="animal", outfit=ITEM), "one person"),
     (_params(mode="swap", outfit={"upload_id": "img", "text": ""}), "a few words"),
-    (_params(mode="other"), "Recast, Restyle or Swap"),
+    (_params(mode="other"), "Recast, Restyle or Restage"),
 ])
 def test_mixtures_are_refused_with_a_reason(uploads, params, why):
     with pytest.raises(srv.UserError, match=why):

@@ -278,3 +278,11 @@ def test_another_place_is_worded_by_what_the_characters_are():
     assert ref.cast_word(["A middle-aged man with short dark hair", "a woman in red"]) == "person"
     assert ref.cast_word(["an orange tabby kitten"]) == "cat"
     assert ref.cast_word(["a green robot"]) == "character"
+
+
+def test_an_outfit_in_words_dresses_the_first_picture():
+    from recast import reference as r
+    p = r.MatchParams(frame="photo.png", outfit_text="matching silver sequin jackets", seed=1)
+    p.validate()
+    text = r.prompt_for(p)
+    assert "now wears matching silver sequin jackets" in text and "Same pose, same camera" in text

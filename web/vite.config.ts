@@ -9,6 +9,7 @@ export default defineConfig({
   build: { target: "es2022" }, // the API module picks mock or live with a top-level await
   server: {
     port: 5180,
-    proxy: { "/api": { target: "http://127.0.0.1:8780", changeOrigin: false } },
+    // RECAST_API points the dev server at another backend (e.g. a second one with judge links on)
+    proxy: { "/api": { target: process.env.RECAST_API ?? "http://127.0.0.1:8780", changeOrigin: false } },
   },
 });

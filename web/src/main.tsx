@@ -17,6 +17,7 @@ const queryClient = new QueryClient({
 
 const router = createBrowserRouter([
   { path: "/j/:token", element: <JudgeEntryPage /> },
+  { path: "/welcome", element: <JudgeEntryPage /> },
   {
     element: <AppShell />,
     children: [

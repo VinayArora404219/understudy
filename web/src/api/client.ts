@@ -3,6 +3,8 @@ import type { GalleryItem, ImageRole, Job, JobParams, MotionPreset, Session, Sty
 export interface Api {
   readonly isMock: boolean;
   session(): Promise<Session>;
+  /** Open a judge link: the server keeps it in a cookie from then on. */
+  claimLink(token: string): Promise<{ kind: "judge"; name: string }>;
   presets(): Promise<MotionPreset[]>;
   styles(): Promise<Style[]>;
   gallery(): Promise<GalleryItem[]>;
@@ -50,6 +52,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 const live: Api = {
   isMock: false,
   session: () => call("/session"),
+  claimLink: (token) => call("/links/claim", { method: "POST", body: JSON.stringify({ token }) }),
   presets: () => call("/presets"),
   styles: () => call("/styles"),
   gallery: () => call("/gallery"),
