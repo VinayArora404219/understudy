@@ -116,7 +116,8 @@ and its preview takes about as long, since it is that render.
   came out a dog-shaped cat (a dog's size, legs and gait), so pick a character with a similar body. People
   can play animals that stand or sit upright, and the other way round (two animals at a keyboard were
   recast as two men, in either order). In one test a person could not be put on a dog standing on four
-  legs: the model drew the person on the human performer instead, whatever the reference said.
+  legs: the model drew the person on the human performer instead, whatever the reference said. An animal's
+  tail counts as part of its body: a cat recast as a woman in jeans grew a third leg where the tail was.
 - Restyle changes places more than people: in Pixel Art and Watercolor the background takes the look while
   a performer stays close to filmed. Over a 10 s Restyle, details are redrawn as it goes (a dog's coat
   gained spots, trousers changed colour); the joins themselves show no jump.
