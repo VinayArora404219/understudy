@@ -20,15 +20,15 @@ export function AppShell() {
         </div>
       )}
       <header className="sticky top-0 z-20 border-b border-ink-800 bg-ink-950/85 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-6 px-4 sm:px-6">
+        <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
           <Link to="/" className="flex items-center gap-2.5 font-semibold tracking-tight">
             <img src="/favicon.svg" alt="" className="h-7 w-7" />
-            <span>Understudy</span>
+            <span className="hidden sm:inline">Understudy</span>
           </Link>
           <nav className="flex items-center gap-1 text-sm">
             {[["/examples", "Examples"], ["/create", "Create"], ["/library", "My renders"]].map(([to, label]) => (
               <NavLink key={to} to={to} className={({ isActive }) => cx(
-                "rounded-lg px-3 py-2 transition-colors",
+                "whitespace-nowrap rounded-lg px-2.5 py-2 transition-colors sm:px-3",
                 isActive ? "bg-ink-800 text-ink-100" : "text-ink-300 hover:text-ink-100",
               )}>{label}</NavLink>
             ))}
