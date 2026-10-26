@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { NavLink, Link, Outlet, useLocation } from "react-router-dom";
 import { api } from "../api/client";
 import { cx } from "./ui";
@@ -6,6 +7,9 @@ import { cx } from "./ui";
 export function AppShell() {
   const { data: session } = useQuery({ queryKey: ["session"], queryFn: () => api.session(), refetchInterval: 15000 });
   const { pathname } = useLocation();
+  // a new page starts at its top: the job page used to open as far down as the create form had been scrolled,
+  // with its start picture above the screen and an empty column in view
+  useEffect(() => window.scrollTo(0, 0), [pathname]);
   // without a judge link only the landing page and the privacy page are open (server/links.py)
   const locked = session?.kind === "guest" && !["/", "/privacy"].includes(pathname);
   return (
