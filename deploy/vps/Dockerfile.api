@@ -1,0 +1,21 @@
+# The FastAPI backend (server/app.py). CPU only: ffmpeg + mediapipe here, the GPU work goes to
+# whatever COMFY_BASE_URL names (the Modal endpoint in deploy/modal).
+FROM python:3.11-slim
+
+# libgl1/libglib2.0-0: mediapipe pulls the non-headless OpenCV, which links against them
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg libgl1 libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --uid 10001 recast
+WORKDIR /app
+COPY pyproject.toml ./
+COPY recast ./recast
+RUN pip install --no-cache-dir ".[server]"
+COPY server ./server
+
+USER recast
+ENV RECAST_DATA=/data
+EXPOSE 8780
+# One worker, always: jobs, the queue and the GPU thread live in this process's memory.
+CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8780", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*"]

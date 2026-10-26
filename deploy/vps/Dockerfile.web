@@ -1,0 +1,11 @@
+# The React app, built against the live API, served by nginx with basic auth in front of it.
+FROM node:20-alpine AS build
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN VITE_API=live npm run build
+
+FROM nginx:1.27-alpine
+COPY deploy/vps/nginx.web.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /web/dist /usr/share/nginx/html

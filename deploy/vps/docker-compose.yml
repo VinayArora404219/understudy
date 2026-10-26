@@ -1,0 +1,39 @@
+# The hosted app: its own Compose project, its own network, no published ports.
+# An edge proxy that already owns 80/443 reaches recast-web over the external network
+# `recast_edge` (see README.md). Machine-specific values come from $EDGE_DIR/recast.env
+# and the environment, never from this file.
+#
+#   EDGE_DIR=/srv/recast-edge docker compose -f deploy/vps/docker-compose.yml up -d --build
+name: recast
+
+services:
+  recast-api:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile.api
+    env_file: ${EDGE_DIR:?set EDGE_DIR}/recast.env
+    environment:
+      RECAST_DATA: /data
+    volumes:
+      - ${EDGE_DIR}/data:/data
+    networks: [internal]
+    cpus: 2
+    mem_limit: 4g
+    restart: unless-stopped
+
+  recast-web:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile.web
+    volumes:
+      - ${EDGE_DIR}/htpasswd:/etc/nginx/htpasswd:ro
+    depends_on: [recast-api]
+    networks: [internal, recast_edge]
+    cpus: 0.5
+    mem_limit: 256m
+    restart: unless-stopped
+
+networks:
+  internal: {}
+  recast_edge:
+    external: true
