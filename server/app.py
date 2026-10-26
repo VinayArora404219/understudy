@@ -1821,7 +1821,7 @@ def _check_mode(params: dict, chars: list, place: dict, performers: int) -> None
         if params.get("outfit") and params.get("outfits") is None:  # one outfit, as the API took it before
             params["outfits"] = [params.pop("outfit")]
         outfits = params.get("outfits") or []
-        if not isinstance(outfits, list) or len(outfits) > scail.MAX_PEOPLE:
+        if not isinstance(outfits, list) or len(outfits) > PICK_MAX:
             raise UserError("One outfit, or none, for each person chosen.")
         for o in outfits:
             if o is not None:
@@ -1868,6 +1868,10 @@ def _check_outfit(outfit: dict, *, image_needed: bool) -> None:
 
 
 ELSEWHERE_MAX = 2  # people in a new place: its start picture is one image edit, with room for two characters
+# People a visitor can choose. SCAIL-2 takes four, but with four chosen, one standing half behind a person
+# kept as filmed bled into them (a beard through a cheek, bench/RESULTS.md). Two leaves SCAIL's other two
+# places for neighbours who touch the chosen ones, so they stay themselves (people.touching).
+PICK_MAX = 2
 CLEAR = 0.25  # of the biggest person's area: smaller is a passer-by or a ball, never chosen for the visitor
 
 
@@ -1933,12 +1937,8 @@ def create_job(params: dict) -> dict:
     if params.get("subject") not in ("person", "animal"):
         raise UserError("Say whether the performer is a person or an animal.")
     performers = params.get("performers", 1)
-    if not isinstance(performers, int) or not 1 <= performers <= scail.MAX_PEOPLE:
-        raise UserError(f"Up to {scail.MAX_PEOPLE} performers.")
-    if performers > ELSEWHERE_MAX and (params.get("place") or {}).get("mode", "keep") != "keep":
-        # another place starts from one picture made by an image edit, which holds two characters at most
-        raise UserError(f"A new place works with up to {ELSEWHERE_MAX} people. "
-                        f"Up to {scail.MAX_PEOPLE} can change in your clip's own place.")
+    if not isinstance(performers, int) or not 1 <= performers <= PICK_MAX:
+        raise UserError(f"Up to {PICK_MAX} performers.")
     chars = params.get("characters") or []
     if not isinstance(chars, list) or not all(isinstance(c, dict) for c in chars):
         raise UserError("Add one character per performer, or none.")

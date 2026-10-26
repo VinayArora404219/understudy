@@ -57,6 +57,7 @@ def test_each_mode_accepts_its_own_change(uploads, params):
     (_params(mode="swap", outfits="a red jacket"), "for each person"),
     (_params(mode="swap", outfit={"upload_id": "img", "text": ""}), "a few words"),
     (_params(mode="other"), "Recast, Restyle or Restage"),
+    (_params(mode="swap", performers=2, outfits=[ITEM, ITEM, ITEM]), "for each person"),
 ])
 def test_mixtures_are_refused_with_a_reason(uploads, params, why):
     with pytest.raises(srv.UserError, match=why):

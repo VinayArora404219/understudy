@@ -5,7 +5,7 @@ import { CompareSlider } from "../components/CompareSlider";
 import { Card, Pill } from "../components/ui";
 
 const MODES = [
-  { key: "recast", name: "Recast", line: "Your performance, played by any character: a person, a mascot, your cat. Up to four performers at once.",
+  { key: "recast", name: "Recast", line: "Your performance, played by any character: a person, a mascot, your cat. Up to two performers at once.",
     swatch: "from-[#c8f560]/30 to-[#7dd3fc]/10" },
   { key: "restyle", name: "Restyle", line: "The same video, redrawn: anime, toy figure, pixel art, comic ink.",
     swatch: "from-[#f0abfc]/30 to-[#7dd3fc]/10" },

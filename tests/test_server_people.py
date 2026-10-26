@@ -45,6 +45,16 @@ def test_a_job_can_only_choose_people_found_at_its_start(app):
     assert c.post("/api/jobs", json=_params([1, 2])).status_code == 400  # one performer, two people
 
 
+def test_two_people_at_most_can_be_chosen(app):
+    """With four chosen, one half behind a kept person bled into them; two leaves SCAIL room for neighbours."""
+    app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": [{"id": i} for i in (1, 2, 3)]}}
+    faces = [{"upload_id": "up_face", "text": t} for t in ("a man in glasses", "a tall knight", "a chef")]
+    c = TestClient(app.app)
+    assert c.post("/api/jobs", json=_params([1, 2], characters=faces[:2], performers=2)).status_code == 200
+    r = c.post("/api/jobs", json=_params([1, 2, 3], characters=faces, performers=3))
+    assert r.status_code == 400 and "Up to 2 performers" in r.text
+
+
 def test_a_posted_character_keeps_only_what_the_page_sends(app):
     """"dressed" names a folder under the data that the server reads and writes: never from a request."""
     app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": [{"id": 1}]}}

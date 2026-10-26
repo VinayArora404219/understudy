@@ -16,7 +16,7 @@ const MODES: [Mode, string, string][] = [
   ["swap", "Restage", "You stay you. New clothes, a new place, or both."],
 ];
 
-const MAX_PICKS = 4; // SCAIL-2 tells up to six apart; four keeps a face big enough
+const MAX_PICKS = 2; // the server's PICK_MAX: with four chosen, one half behind a kept person bled into them
 const ELSEWHERE_MAX = 2; // a new place starts from one image edit, with room for two characters
 
 /** Everyone found in the clip's start frame (`people`), and who Recast replaces (`picks`, Person ids).
