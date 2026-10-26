@@ -494,6 +494,14 @@ ones. Of 115 past jobs, one had chosen more than two.
 showed. It now opens the box for typing at 3 minutes and keeps looking: with the words held back for
 200 s in the browser, the box opened at 182 s and filled at 202 s.
 
+## Recreate reproduces the video (2026-10-26)
+
+The Examples page's "Recreate this" copies an example's clip (with the people found in it) and its pictures
+(with their words) into the visitor's own uploads, and opens Create with every choice. Through the web app
+with a judge link, the office example (two of six recast, 5 s) was recreated and made without changing
+anything: the new `recast.mp4` is byte-identical to the example's, on the same 16 GB card (646 s against
+654 s). Across GPUs the same graph and seed differ slightly (SSIM 0.99 above).
+
 ## Running on Modal (2026-10-24)
 
 The judge build renders on Modal (`deploy/modal/`): ComfyUI 0.41.3 + comfy-api-proxy 0.1.6 per container, same

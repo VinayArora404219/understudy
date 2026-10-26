@@ -16,7 +16,7 @@ const MODES = [
 const STEPS = [
   ["Pick a motion", "Film 4–30 seconds on your phone, or start from one of ours."],
   ["Choose what changes", "Someone else performs, everything gets a new look, or you stay and one thing changes."],
-  ["Approve, then render", "See a preview first. Only then does the video render."],
+  ["Make it", "A 5 s video is made straight away. A longer one can start with a free draft you approve first."],
 ];
 
 export function LandingPage() {
