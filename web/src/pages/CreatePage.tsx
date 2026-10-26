@@ -737,17 +737,19 @@ function Option({ title, line, on, tag, children }: { title: string; line: strin
 }
 
 /** The vision model writes the words for an image in its role; they prefill an empty box, editable once written.
- * `failed`: it wrote nothing, so the visitor types them. */
+ * `slow`: past 3 minutes (on one GPU it waits behind the video in progress); the box opens for typing and the
+ * words still fill it if it is empty when they come. `failed`: it wrote nothing, so the visitor types them. */
 function useAutoText(upload: Upload | undefined, role: ImageRole, text: string, setText: (t: string) => void) {
   const asked = useRef<string | undefined>(undefined);
   const qc = useQueryClient();
   const [gaveUp, setGaveUp] = useState<string | undefined>(undefined); // upload id whose words never came
+  const [slow, setSlow] = useState<string | undefined>(undefined); // upload id whose words are taking long
   // Poll until the words exist, not while the server says "describing": the first read can land before the
   // describe request does and see neither, which used to stop the polling with the box locked.
   const waiting = (u?: Upload) => !!upload && gaveUp !== upload.id && u?.descriptions?.[role] === undefined;
   const q = useQuery({
     queryKey: ["upload", upload?.id], queryFn: () => api.getUpload(upload!.id), enabled: !!upload,
-    refetchInterval: (r) => (waiting(r.state.data) ? 2000 : false),
+    refetchInterval: (r) => (waiting(r.state.data) ? (slow === upload?.id ? 5000 : 2000) : false),
   });
   useEffect(() => {
     if (!upload || asked.current === upload.id) return;
@@ -758,18 +760,20 @@ function useAutoText(upload: Upload | undefined, role: ImageRole, text: string, 
   useEffect(() => { // a box that never unlocks is worse than an empty one
     if (!upload) return;
     const id = upload.id;
-    const t = setTimeout(() => setGaveUp(id), 180_000);
-    return () => clearTimeout(t);
+    const t = [setTimeout(() => setSlow(id), 180_000), setTimeout(() => setGaveUp(id), 900_000)];
+    return () => t.forEach(clearTimeout);
   }, [upload?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const words = q.data?.descriptions?.[role];
   useEffect(() => {
     if (words && !text.trim()) setText(words);
   }, [words]); // eslint-disable-line react-hooks/exhaustive-deps
-  return { writing: waiting(q.data), failed: words === "" || (!!upload && gaveUp === upload.id && words === undefined) };
+  const late = waiting(q.data) && slow === upload?.id;
+  return { writing: waiting(q.data) && !late, slow: late,
+    failed: words === "" || (!!upload && gaveUp === upload.id && words === undefined) };
 }
 
 function CharacterPick({ who, slot, onChange }: { who: React.ReactNode; slot?: CharSlot; onChange: (c: CharSlot | undefined) => void }) {
-  const { writing, failed } = useAutoText(slot?.upload, "character", slot?.text ?? "", (t) => slot && onChange({ ...slot, text: t }));
+  const { writing, slow, failed } = useAutoText(slot?.upload, "character", slot?.text ?? "", (t) => slot && onChange({ ...slot, text: t }));
   return (
     <div className="space-y-3">
       {who && <div className="text-sm font-medium text-ink-100">{who}</div>}
@@ -782,6 +786,7 @@ function CharacterPick({ who, slot, onChange }: { who: React.ReactNode; slot?: C
           value={slot.text} onChange={(t) => onChange({ ...slot, text: t })}
           busy={writing ? "Looking at the picture: face, hair and clothes…" : undefined}
           help={writing ? "You can edit the words once they're written. This takes about half a minute."
+            : slow ? "The GPU is busy with another video, so this is taking longer. Type the words now, or wait: they fill in here if the box is still empty."
             : failed ? "We couldn't read the picture. The video draws them from the photo and these words: describe their face, hair and clothes. Their clothes come from the photo."
             : "Written from the picture. The video draws them from the photo and these words, so fix anything wrong. Their clothes come from the photo: to change them, use a photo in those clothes. Their moves come from your clip: leave out names and actions."} />
       )}
@@ -811,12 +816,13 @@ function OutfitPick({ who, label, slot, onChange }: {
 }
 
 function ItemText({ role, upload, value, onChange }: { role: ImageRole; upload: Upload; value: string; onChange: (t: string) => void }) {
-  const { writing, failed } = useAutoText(upload, role, value, onChange);
+  const { writing, slow, failed } = useAutoText(upload, role, value, onChange);
   return (
     <TextField label="How it looks in the video" placeholder={role === "outfit" ? "e.g. a red leather biker jacket with silver zips" : "e.g. a green glass bottle with a white label"}
       value={value} onChange={onChange}
       busy={writing ? `Looking at the picture: what the ${role} is, its colour and material…` : undefined}
       help={writing ? "You can edit the words once they're written. This takes about half a minute."
+        : slow ? "The GPU is busy with another video, so this is taking longer. Type the words now, or wait: they fill in here if the box is still empty."
         : failed ? "We couldn't read the picture. The video draws it from the photo and these words: say what it is, its colour and material."
         : "Written from the picture. The video draws it from the photo and these words, so fix anything wrong."} />
   );

@@ -472,6 +472,28 @@ frame alike. A gain with an offset, fitted on an all-light room, flattened the p
 the gains were within 5% for most, 12 to 20% for the white-studio ones, and at the 25% limit for four square
 ones (checked: closer to the clip, a little bright). No seams by construction, as the whole frame moves.
 
+## Anime kept in its own place, and two performers (2026-10-26)
+
+The Anime look's words ended with "painted background", in the start-picture edit and in the video's words.
+The edit read it as "paint a backdrop". The words now say the place is kept as it is and drawn in the same
+style. Only the Anime look changed; the other looks change the place on purpose (a playset, a wet neon
+floor). Same clips, same seed (1), start picture first, then one video:
+
+| Clip | Before | After |
+|---|---|---|
+| Studio duo (plain white studio) | a park: sky, trees, a fence and a dirt path | the plain studio |
+| Breaking (bare concrete wall) | the wall drawn as panels with tie holes | the same picture |
+| Studio duo, 5 s video | the park for the whole video | the studio for the whole video; the faces drift back toward the real ones after the first frame, as before |
+
+**Two performers at most.** With four chosen, one standing half behind a person kept as filmed bled into
+them (above). The app now offers two; SCAIL-2's other two places go to neighbours who touch the chosen
+ones. Of 115 past jobs, one had chosen more than two.
+
+**Words for a photo on a busy GPU.** On one GPU, a photo's reading waits for the render in progress (5 to
+11 minutes a chunk). The page gave up at 3 minutes and stopped looking, so words that came later never
+showed. It now opens the box for typing at 3 minutes and keeps looking: with the words held back for
+200 s in the browser, the box opened at 182 s and filled at 202 s.
+
 ## Running on Modal (2026-10-24)
 
 The judge build renders on Modal (`deploy/modal/`): ComfyUI 0.41.3 + comfy-api-proxy 0.1.6 per container, same

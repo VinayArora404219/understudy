@@ -29,9 +29,12 @@ STYLES: dict[str, Style] = {s.key: s for s in [
           "a world knitted from chunky wool yarn: the character and every object made of knitted stitches "
           "and felt, cosy soft light",
           "knitted chunky wool yarn and felt, visible stitches, cosy soft light"),
+    # "painted background" read as "paint a backdrop": a plain studio became a park, a bare wall got panels
+    # (bench/RESULTS.md, "Anime kept in its own place"). The place is now named as kept.
     Style("anime", "Anime Cel",
-          "a hand-drawn anime cel frame: clean ink outlines, flat cel shading, painted background",
-          "hand-drawn anime cel animation, clean ink lines, flat cel shading, painted background"),
+          "a hand-drawn anime cel frame: clean ink outlines, flat cel shading, the place kept as it is and "
+          "drawn in the same style",
+          "hand-drawn anime cel animation, clean ink lines, flat cel shading"),
     Style("toy", "Toy Figure 3D",
           "a glossy 3D toy world: the character as a smooth vinyl collectible figure with rounded "
           "proportions, the room as a bright plastic playset",
