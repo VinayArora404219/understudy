@@ -1,4 +1,4 @@
-# The React app, built against the live API, served by nginx with basic auth in front of it.
+# The React app, built against the live API, served by nginx.
 FROM node:20-alpine AS build
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
