@@ -74,15 +74,18 @@ function InProgress({ job }: { job: Job }) {
   // A sheet of cut-outs ("cast") is what the model works from, not how the video starts: show who was chosen
   const sheet = job.preview?.kind === "cast";
   const start = sheet ? job.preview?.frame_url : job.preview?.reference_url ?? job.preview?.frame_url;
+  // before the server has a picture (the first seconds after submitting), the clip itself, never a black box
+  const clip = job.inputs?.find((i) => i.kind === "video")?.thumb_url;
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,380px)_1fr]">
       <div className="relative self-start overflow-hidden rounded-[var(--radius-card)] border border-ink-700" style={aspectOf(job.aspect)}>
         {job.preview?.first_url
           ? <video src={job.preview.first_url} poster={job.preview.first_frame_url} autoPlay loop muted playsInline aria-label="The start of your video" className="h-full w-full object-cover opacity-60" />
-          : start && <img src={start} alt={sheet ? "Who you chose, in your first frame" : "Starting frame"} className="h-full w-full object-cover opacity-60" />}
+          : start ? <img src={start} alt={sheet ? "Who you chose, in your first frame" : "Starting frame"} className="h-full w-full object-cover opacity-60" />
+          : clip && <img src={clip} alt="Your clip" className="h-full w-full object-cover opacity-60" />}
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-5 text-sm">
           {job.preview?.first_url || (start && !sheet && start === job.preview?.reference_url)
-            ? "This is where your video starts." : "Who you chose, in your first frame."}</div>
+            ? "This is where your video starts." : start ? "Who you chose, in your first frame." : "Your clip."}</div>
       </div>
       <div className="space-y-6 self-start">
       <Card className="p-6">
