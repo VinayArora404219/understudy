@@ -45,6 +45,17 @@ def test_a_job_can_only_choose_people_found_at_its_start(app):
     assert c.post("/api/jobs", json=_params([1, 2])).status_code == 400  # one performer, two people
 
 
+def test_a_ready_made_motion_is_used_as_the_visitors_copy(app):
+    """The page sent the motion's id with its copy, and every job from "Use one of ours" was refused."""
+    app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": [{"id": 1}]}}
+    p = _params([1])
+    p["motion"]["preset_id"] = "dance_breaking"
+    r = TestClient(app.app).post("/api/jobs", json=p)
+    assert r.status_code == 200 and "preset_id" not in r.json()["params"]["motion"]
+    p["motion"].pop("upload_id")
+    assert TestClient(app.app).post("/api/jobs", json=p).status_code == 400
+
+
 def test_two_people_at_most_can_be_chosen(app):
     """With four chosen, one half behind a kept person bled into them; two leaves SCAIL room for neighbours."""
     app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": [{"id": i} for i in (1, 2, 3)]}}

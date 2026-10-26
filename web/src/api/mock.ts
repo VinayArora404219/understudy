@@ -2,7 +2,7 @@
 // It never pretends to render: previews and results are the visitor's own media played back,
 // and the UI marks every mock result as such.
 
-import type { Api } from "./client";
+import { ApiError, type Api } from "./client";
 import type { Check, GalleryItem, Job, JobParams, MotionPreset, Session, Style, Upload } from "./types";
 
 const STYLES: Style[] = [
@@ -159,6 +159,14 @@ export const mockApi: Api = {
   },
   async styles() { return STYLES; },
   async gallery(): Promise<GalleryItem[]> { return []; },
+  async recreateJob(jid) {
+    const j = jobs.get(jid);
+    if (!j) throw new ApiError("That render is gone.", 404);
+    const ids = [j.params.motion.upload_id, ...j.params.characters.map((c) => c.upload_id)].filter((x): x is string => !!x);
+    return { params: j.params, uploads: Object.fromEntries(ids.filter((x) => uploads.has(x)).map((x) => [x, uploads.get(x)!])),
+      people: null, preset: null, title: j.title ?? "" };
+  },
+  async recreateExample() { throw new ApiError("The preview build has no examples.", 404); },
 
   async upload(file, kind) {
     await sleep(400);

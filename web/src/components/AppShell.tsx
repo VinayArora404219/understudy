@@ -26,7 +26,7 @@ export function AppShell() {
             <span>Understudy</span>
           </Link>
           <nav className="flex items-center gap-1 text-sm">
-            {[["/create", "Create"], ["/library", "My renders"]].map(([to, label]) => (
+            {[["/examples", "Examples"], ["/create", "Create"], ["/library", "My renders"]].map(([to, label]) => (
               <NavLink key={to} to={to} className={({ isActive }) => cx(
                 "rounded-lg px-3 py-2 transition-colors",
                 isActive ? "bg-ink-800 text-ink-100" : "text-ink-300 hover:text-ink-100",

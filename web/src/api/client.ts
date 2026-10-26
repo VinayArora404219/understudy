@@ -1,4 +1,4 @@
-import type { GalleryItem, ImageRole, Job, JobParams, MotionPreset, Session, Style, Upload } from "./types";
+import type { GalleryItem, ImageRole, Job, JobParams, MotionPreset, Recreate, Session, Style, Upload } from "./types";
 
 export interface Api {
   readonly isMock: boolean;
@@ -10,6 +10,9 @@ export interface Api {
   usePreset(id: string): Promise<Upload>;
   styles(): Promise<Style[]>;
   gallery(): Promise<GalleryItem[]>;
+  /** Start again from one of the visitor's renders, or from an example (its uploads become theirs). */
+  recreateJob(jobId: string): Promise<Recreate>;
+  recreateExample(id: string): Promise<Recreate>;
   upload(file: File, kind: "video" | "image"): Promise<Upload>;
   /** Ask for an image's description in a role; poll getUpload until `descriptions[role]` is set. */
   describeUpload(id: string, role: ImageRole): Promise<Upload>;
@@ -59,6 +62,8 @@ const live: Api = {
   usePreset: (id) => call(`/presets/${id}/use`, { method: "POST" }),
   styles: () => call("/styles"),
   gallery: () => call("/gallery"),
+  recreateJob: (id) => call(`/jobs/${id}/recreate`, { method: "POST" }),
+  recreateExample: (id) => call(`/gallery/${id}/recreate`, { method: "POST" }),
   upload: (file, kind) => {
     const form = new FormData();
     form.append("file", file);

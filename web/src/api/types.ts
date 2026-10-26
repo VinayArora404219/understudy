@@ -63,7 +63,8 @@ export interface MotionPreset {
 export interface Style {
   key: string;
   name: string;
-  swatch: [string, string]; // gradient used on the tile until a preview clip exists
+  swatch: [string, string]; // gradient used on the tile when there is no example picture
+  image_url?: string | null; // an example frame in this look, made by Restyle's start-picture step
 }
 
 export type PlaceMode = "keep" | "describe" | "image" | "character";
@@ -83,7 +84,7 @@ export interface JobParams {
   mode: Mode;
   /** picks: Recast's chosen people (Person.id) in the start frame; they set `performers`. */
   motion: { upload_id?: string; preset_id?: string; start: number; length: number; picks?: number[] }; // seconds, 2..20
-  performers: number; // who is replaced (Recast) or in the clip: 1 to 4, or up to 2 in a new place
+  performers: number; // who is replaced (Recast) or restaged: 1 or 2
   subject: "person" | "animal"; // with picks, the server reads it from the clip
   /** One per performer, or none. With two performers: [the one on the picture's left, the one on its right]. */
   characters: CharacterRef[];
@@ -185,11 +186,28 @@ export interface Session {
   credits_total: number;
 }
 
+/** An example already made, to watch and start from (POST /api/gallery/{id}/recreate). */
 export interface GalleryItem {
   id: string;
-  mode: "Recast" | "Restyle" | "Move";
+  mode: "Recast" | "Restyle" | "Restage";
   title: string;
+  line: string;
+  summary: string; // the sentence the video followed
+  aspect?: [number, number] | null;
+  seconds?: number;
   before_url: string;
   after_url: string;
+  compare_url: string;
   poster_url: string;
+  recipe_url: string;
+  choices: { label: string; text?: string | null; thumb_url?: string | null }[];
+}
+
+/** Everything the create page needs to start again from a finished job's choices, as the visitor's own. */
+export interface Recreate {
+  params: JobParams;
+  uploads: Record<string, Upload>;
+  people: { key: string; frame_url: string; list: Person[] } | null;
+  preset: MotionPreset | null;
+  title: string;
 }

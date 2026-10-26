@@ -1647,15 +1647,117 @@ def use_preset(pid: str) -> dict:
     return _public(u)
 
 
+# Examples already made, for anyone with a link to watch and start from (tools/add_gallery.py):
+# items/<id>/ holds item.json, the videos, the recipe and copies of the uploads behind it; looks/<style>.jpg is
+# one example frame in each look, made by Restyle's own start-picture step.
+GALLERY = DATA / "gallery"
+MODE_NAMES = {"recast": "Recast", "restyle": "Restyle", "swap": "Restage"}
+RECREATE_KEYS = ("mode", "motion", "performers", "subject", "characters", "style", "place", "outfits", "finish", "audio")
+
+
 @app.get("/api/styles")
 def style_list() -> list:
-    return [{"key": s.key, "name": s.name, "swatch": list(SWATCH.get(s.key, ("#94a3b8", "#475569")))}
+    return [{"key": s.key, "name": s.name, "swatch": list(SWATCH.get(s.key, ("#94a3b8", "#475569"))),
+             "image_url": _url(f) if (f := GALLERY / "looks" / f"{s.key}.jpg").exists() else None}
             for s in styles.STYLES.values()]
+
+
+def _gallery_items() -> list[tuple[Path, dict]]:
+    found = []
+    for f in (GALLERY / "items").glob("*/item.json"):
+        try:
+            found.append((f.parent, json.loads(f.read_text())))
+        except (OSError, ValueError):
+            log.warning("gallery item %s unreadable", f.parent.name)
+    return sorted(found, key=lambda x: (x[1].get("order", 99), x[0].name))
 
 
 @app.get("/api/gallery")
 def gallery() -> list:
-    return []
+    return [{"id": d.name, "mode": MODE_NAMES.get(it["params"]["mode"], "Recast"), "title": it["title"],
+             "line": it.get("line", ""), "summary": it.get("summary", ""), "aspect": it.get("aspect"),
+             "seconds": it["params"]["motion"].get("length"),
+             "before_url": _url(d / "before.mp4"), "after_url": _url(d / "after.mp4"),
+             "compare_url": _url(d / "compare.mp4"), "poster_url": _url(d / "poster.jpg"),
+             "recipe_url": _url(d / "recipe.json"),
+             "choices": [{"label": c["label"], "text": c.get("text"),
+                          "thumb_url": _url(d / c["thumb"]) if c.get("thumb") else None} for c in it.get("choices", [])]}
+            for d, it in _gallery_items()]
+
+
+def _upload_ids(p: dict) -> list[str]:
+    ids = [(p.get("motion") or {}).get("upload_id"), (p.get("place") or {}).get("upload_id")]
+    ids += [c.get("upload_id") for c in p.get("characters") or []]
+    ids += [o.get("upload_id") for o in p.get("outfits") or [] if o]
+    return [i for i in ids if i]
+
+
+def _recreate(params: dict, ids: dict[str, str]) -> dict:
+    """What the create page needs to start again from a finished job's choices: its settings, the visitor's own
+    uploads (`ids` maps an example's upload to the visitor's copy), who was found in the clip and its motion."""
+    p = json.loads(json.dumps({k: params[k] for k in RECREATE_KEYS if k in params}))
+    if params.get("outfit") and not p.get("outfits"):  # one outfit, as the API took it before
+        p["outfits"] = [params["outfit"]]
+    for ref in [p["motion"], p.get("place") or {}, *(p.get("characters") or []), *(o for o in p.get("outfits") or [] if o)]:
+        if ref.get("upload_id"):
+            ref["upload_id"] = ids.get(ref["upload_id"], ref["upload_id"])
+    p["motion"].pop("preset_id", None)
+    uploads = {}
+    for uid in _upload_ids(p):
+        u = UPLOADS.get(uid)
+        if u is None or not _mine(u):
+            raise HTTPException(404, "A clip or picture behind that video is gone. Start a new one.")
+        uploads[uid] = _public(u)
+    clip = UPLOADS.get(p["motion"].get("upload_id") or "")
+    if clip is None:
+        raise HTTPException(404, "The clip behind that video is gone. Start a new one.")
+    layout, _ = _clip_layout(clip["id"], params.get("shape"))
+    key = _people_key(p["motion"].get("start", 0), layout)
+    entry = (clip.get("people") or {}).get(key) or {}
+    people = {"key": key, "frame_url": entry["frame_url"], "list": entry.get("people") or []} \
+        if entry.get("state") == "ready" and entry.get("frame_url") else None
+    preset = next((x for x in presets() if x["id"] == clip.get("_preset")), None)
+    return {"params": p, "uploads": uploads, "people": people, "preset": preset}
+
+
+@app.post("/api/jobs/{jid}/recreate")
+def recreate_job(jid: str) -> dict:
+    """Start a new job from one of the visitor's own: the same clip, people, pictures and settings."""
+    j = JOBS.get(jid)
+    if j is None or not _mine(j):
+        raise HTTPException(404, "That render is gone.")
+    return {**_recreate(j["params"], {}), "title": j.get("title", "")}
+
+
+def _copy_upload(src: Path, me: str, origin: str) -> str:
+    """An example's clip or picture as the visitor's own upload, with its people and words: once per visitor."""
+    with LOCK:
+        mine = next((u for u in UPLOADS.values() if u.get("_example") == origin and u.get("_owner", LOCAL) == me), None)
+    if mine:
+        return mine["id"]
+    uid = _new_id("up")
+    d = DATA / "uploads" / uid
+    shutil.copytree(src, d)
+    for f in d.rglob("*.json"):  # its own paths and urls name the example's upload id
+        f.write_text(f.read_text().replace(src.name, uid))
+    u = {**json.loads((d / "upload.json").read_text()), "_owner": me, "_example": origin}
+    _write_json(d / "upload.json", u)
+    with LOCK:
+        UPLOADS[uid] = u
+    return uid
+
+
+@app.post("/api/gallery/{gid}/recreate")
+def recreate_example(gid: str) -> dict:
+    """Start from an example: its clip and pictures become the visitor's own uploads, with every choice kept."""
+    d = GALLERY / "items" / gid
+    if not gid.replace("_", "").isalnum() or not (d / "item.json").exists():
+        raise HTTPException(404, "That example is gone.")
+    it = json.loads((d / "item.json").read_text())
+    me = _OWNER.get() or LOCAL
+    ids = {src.name: _copy_upload(src, me, f"{gid}/{src.name}")
+           for src in sorted((d / "uploads").iterdir()) if (src / "upload.json").exists()}
+    return {**_recreate(it["params"], ids), "title": it["title"]}
 
 
 @app.post("/api/uploads")
@@ -1922,8 +2024,9 @@ def _check_picks(params: dict, performers: int) -> None:
 @app.post("/api/jobs")
 def create_job(params: dict) -> dict:
     m = params.get("motion") or {}
-    if m.get("preset_id"):
+    if m.get("preset_id") and not m.get("upload_id"):
         raise UserError("Ready-made motions aren't on this server yet. Upload your own clip.")
+    m.pop("preset_id", None)  # a ready-made motion is used as the visitor's own copy of it (use_preset)
     _upload_path(m.get("upload_id", ""), "video")
     length, start = m.get("length"), m.get("start", 0)
     if (not isinstance(length, (int, float)) or isinstance(length, bool) or not SHORTEST <= length <= LONGEST

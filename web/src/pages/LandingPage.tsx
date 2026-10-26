@@ -37,7 +37,10 @@ export function LandingPage() {
             <Link to="/create" className="inline-flex h-14 items-center rounded-[var(--radius-control)] bg-accent px-6 font-medium text-accent-ink hover:brightness-105">
               Start creating
             </Link>
-            <a href="#how" className="inline-flex h-14 items-center rounded-[var(--radius-control)] border border-ink-700 bg-ink-800 px-6 font-medium hover:bg-ink-700">
+            <Link to="/examples" className="inline-flex h-14 items-center rounded-[var(--radius-control)] border border-ink-700 bg-ink-800 px-6 font-medium hover:bg-ink-700">
+              See examples
+            </Link>
+            <a href="#how" className="inline-flex h-14 items-center px-3 font-medium text-ink-300 hover:text-ink-100">
               How it works
             </a>
           </div>
@@ -49,8 +52,14 @@ export function LandingPage() {
         </div>
         <div className="mx-auto w-full max-w-sm">
           {gallery?.[0] ? (
-            <CompareSlider before={gallery[0].before_url} after={gallery[0].after_url} poster={gallery[0].poster_url}
-              labels={["Original", gallery[0].mode]} />
+            <>
+              <CompareSlider before={gallery[0].before_url} after={gallery[0].after_url} poster={gallery[0].poster_url}
+                labels={["Original", gallery[0].mode]} aspect={gallery[0].aspect ?? undefined} />
+              <p className="mt-3 flex items-center justify-between gap-3 text-sm text-ink-500">
+                <span>{gallery[0].title}. Drag to compare.</span>
+                <Link to={`/examples?item=${gallery[0].id}`} className="shrink-0 text-accent hover:underline">Recreate it →</Link>
+              </p>
+            </>
           ) : (
             <div className="relative aspect-[9/16] overflow-hidden rounded-[var(--radius-card)] border border-ink-700 bg-gradient-to-br from-ink-800 to-ink-900">
               <div className="absolute inset-0 grid place-items-center p-8 text-center text-sm text-ink-500">
@@ -65,7 +74,14 @@ export function LandingPage() {
         {MODES.map((m) => (
           <Link key={m.key} to={`/create?mode=${m.key}`} className="group">
             <Card className="h-full overflow-hidden transition-colors group-hover:border-ink-500">
-              <div className={`h-28 bg-gradient-to-br ${m.swatch}`} />
+              {(() => { // real results in this mode when there are some, else its colour
+                const ex = (gallery ?? []).filter((g) => g.mode === m.name).slice(0, 3);
+                return ex.length ? (
+                  <div className="flex h-44 gap-px bg-ink-800">
+                    {ex.map((g) => <img key={g.id} src={g.poster_url} alt="" loading="lazy" className="h-full min-w-0 flex-1 object-cover" />)}
+                  </div>
+                ) : <div className={`h-28 bg-gradient-to-br ${m.swatch}`} />;
+              })()}
               <div className="p-6">
                 <h3 className="text-lg font-semibold">{m.name} <span className="text-ink-500 transition-transform group-hover:translate-x-0.5">→</span></h3>
                 <p className="mt-2 text-sm text-ink-300">{m.line}</p>

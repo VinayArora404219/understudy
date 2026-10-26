@@ -58,6 +58,25 @@ export function CreatePage() {
   const [change, setChange] = useState<Change>({ draft: false, outfits: [], characters: [], place: { mode: "keep", text: "" }, finish: "720p", audio: "original" });
   const [job, setJob] = useState<Job>();
   const { data: session } = useQuery({ queryKey: ["session"], queryFn: () => api.session() });
+  // Recreate: start from a finished render's choices (?from=job id) or an example's (?example=gallery id)
+  const from = search.get("from"), example = search.get("example");
+  const again = useQuery({
+    queryKey: ["recreate", from, example], enabled: !!(from || example), staleTime: Infinity, retry: false,
+    queryFn: () => (from ? api.recreateJob(from) : api.recreateExample(example!)),
+  });
+  useEffect(() => {
+    const r = again.data;
+    if (!r) return;
+    const p = r.params, up = (id?: string) => (id ? r.uploads[id] : undefined);
+    setMode(p.mode);
+    setMotion({ upload: up(p.motion.upload_id), preset: r.preset ?? undefined, start: p.motion.start, length: p.motion.length,
+      people: r.people ?? undefined, picks: p.motion.picks ?? [] });
+    setChange({ draft: false, finish: p.finish, audio: p.audio, style: p.style,
+      characters: p.characters.map((c) => ({ upload: up(c.upload_id)!, text: c.text })),
+      outfits: (p.outfits ?? []).map((o) => (o ? { upload: up(o.upload_id), text: o.text } : undefined)),
+      place: { mode: p.place.mode, text: p.place.text ?? "", upload: up(p.place.upload_id) } });
+    setStep("change");
+  }, [again.data]);
 
   const steps: [Step, string][] = [["motion", "Motion"], ["change", "What changes"], ["preview", "Preview"]];
   const idx = steps.findIndex(([s]) => s === step);
@@ -77,6 +96,16 @@ export function CreatePage() {
             </li>
           ))}
         </ol>
+        {again.isFetching && (
+          <Card className="mb-6 flex items-center gap-3 p-5 text-sm text-ink-300"><Spinner /> Getting {from ? "your render's" : "the example's"} choices ready…</Card>
+        )}
+        {again.isError && <Card className="mb-6 p-5 text-sm text-bad">{(again.error as Error).message}</Card>}
+        {again.data && step !== "preview" && (
+          <Card className="mb-6 p-4 text-sm text-ink-300">
+            Starting from {from ? "your render " : ""}<span className="font-medium text-ink-100">{again.data.title || "an earlier render"}</span>, with every
+            choice as it was made. Change anything, then make the video.
+          </Card>
+        )}
         {step === "motion" && <MotionStep mode={mode} setMode={setMode} motion={motion} setMotion={setMotion} onNext={() => setStep("change")} />}
         {step === "change" && (
           <ChangeStep mode={mode} change={change} setChange={setChange} onBack={() => setStep("motion")}
@@ -327,7 +356,7 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
       const refs: CharacterRef[] = characters.map((c) => ({ upload_id: c.upload.id, text: c.text, keep_outfit: false }));
       const params: JobParams = {
         mode,
-        motion: { upload_id: motion.upload?.id, preset_id: motion.preset?.id, start: motion.start, length: motion.length,
+        motion: { upload_id: motion.upload?.id, preset_id: motion.upload ? undefined : motion.preset?.id, start: motion.start, length: motion.length,
           picks: mode !== "restyle" && motion.picks.length ? motion.picks : undefined },
         performers,
         subject: "person", // Restage's items need a person; with picks the server reads person or animal from the clip
@@ -476,7 +505,9 @@ function StyleGrid({ value, onChange }: { value?: string; onChange: (k?: string)
         <button key={s.key} onClick={() => onChange(value === s.key ? undefined : s.key)}
           className={cx("group overflow-hidden rounded-xl border text-left transition",
             value === s.key ? "border-accent ring-2 ring-accent/40" : "border-ink-700 hover:border-ink-500")}>
-          <div className="aspect-square" style={{ background: `linear-gradient(135deg, ${s.swatch[0]}, ${s.swatch[1]})` }} />
+          {s.image_url
+            ? <img src={s.image_url} alt="" loading="lazy" className="aspect-square w-full object-cover transition group-hover:brightness-110" />
+            : <div className="aspect-square" style={{ background: `linear-gradient(135deg, ${s.swatch[0]}, ${s.swatch[1]})` }} />}
           <div className="px-2.5 py-2 text-xs font-medium">{s.name}</div>
         </button>
       ))}

@@ -6,6 +6,7 @@ import { AppShell } from "./components/AppShell";
 import { AdminPage } from "./pages/AdminPage";
 import "./index.css";
 import { CreatePage } from "./pages/CreatePage";
+import { ExamplesPage } from "./pages/ExamplesPage";
 import { JobPage } from "./pages/JobPage";
 import { JudgeEntryPage } from "./pages/JudgeEntryPage";
 import { LandingPage } from "./pages/LandingPage";
@@ -25,6 +26,7 @@ const router = createBrowserRouter([
     children: [
       { path: "/", element: <LandingPage /> },
       { path: "/create", element: <CreatePage /> },
+      { path: "/examples", element: <ExamplesPage /> },
       { path: "/jobs/:id", element: <JobPage /> },
       { path: "/library", element: <LibraryPage /> },
       { path: "/privacy", element: <PrivacyPage /> },

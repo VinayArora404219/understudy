@@ -37,6 +37,9 @@ Open weights only, end to end, run through the official
 - **Restyle reads your clip.** Depth can't see sunglasses against a face, so Qwen3-VL looks at four moments of
   the clip and names what the performers put on, take off or pick up; you can edit that line. Background events
   are left out on purpose: naming a far-off cyclist pulled him into the foreground.
+- **Every result can be made again.** A finished render's Recreate opens Create with the same clip, the people
+  chosen in it, the pictures, their words and every setting, ready to change. The Examples page does the same
+  for videos made here: each one's clip and pictures are copied into the visitor's own uploads.
 - **It never says what isn't there.** "No glasses" in a prompt only adds the word glasses. Negations are
   removed from the character's words and the render prompt, and the character is cut out of their photo, so a
   helmet on the desk beside them
@@ -84,7 +87,12 @@ uv venv && uv pip install -e ".[dev]"
 cp .env.example .env          # set COMFY_BASE_URL to your comfy-api-proxy
 tools/serve_local.sh          # backend on :8780, web app on http://localhost:5180
 python3 tools/add_presets.py   # optional: the example clips as ready-made motions ("Use one of ours")
+python3 tools/add_gallery.py spec.json  # optional: finished jobs as Examples to watch and recreate
 ```
+
+`add_gallery.py` copies finished jobs from this server's data into `gallery/` (each with its videos, recipe and
+the uploads behind it) and one start picture per look for the style cards. To show them on another server, copy
+`runs/app/gallery/` into that server's data folder.
 
 The `recast` CLI (`recast run`, `recast match`, `recast styles`) is the first version of the pipeline, on Wan
 Animate-2, kept for comparison. `--dry-run` writes its graphs without a GPU.

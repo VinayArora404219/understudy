@@ -234,6 +234,7 @@ function Result({ job }: { job: Job }) {
         <div className="flex flex-wrap gap-3">
           <a href={r.compare_url} download className={pill}>Side by side</a>
           <a href={r.recipe_url} download="recipe.json" className={pill}>Recipe</a>
+          <Link to={`/create?from=${job.id}`} className={pill} title="The same clip, people, pictures and settings, ready to change">Recreate</Link>
           <Link to="/create" className={pill}>Make another</Link>
         </div>
       </aside>
@@ -263,8 +264,8 @@ function Failed({ job }: { job: Job }) {
             {again.isPending ? "Starting…" : "Render again"}
           </button>
         )}
-        <Link to="/create" className={cx(button, rerun ? "border border-ink-700 text-ink-100" : "bg-accent text-accent-ink")}>
-          {rerun ? "Start over" : "Try again"}
+        <Link to={`/create?from=${job.id}`} className={cx(button, rerun ? "border border-ink-700 text-ink-100" : "bg-accent text-accent-ink")}>
+          {rerun ? "Change choices" : "Try again"}
         </Link>
       </div>
     </Card>
