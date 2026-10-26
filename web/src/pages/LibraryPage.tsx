@@ -10,6 +10,8 @@ import { Empty } from "./JobPage";
 const posterOf = (j: Job) => j.result?.poster_url ?? j.preview?.first_frame_url
   ?? (j.preview?.kind === "cast" ? j.preview.frame_url : j.preview?.reference_url ?? j.preview?.frame_url);
 
+const FINISHED = new Set(["done", "failed", "cancelled"]);
+
 export function LibraryPage() {
   const { data: jobs, isLoading } = useQuery({ queryKey: ["jobs"], queryFn: () => api.jobs(), refetchInterval: 4000 });
   if (isLoading) return <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton aspect-[9/16] rounded-[var(--radius-card)]" />)}</div>;
@@ -23,12 +25,12 @@ export function LibraryPage() {
       <h1 className="mb-6 text-2xl font-semibold tracking-tight">My renders</h1>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
         {list.map((j) => (
-          <Link key={j.id} to={`/jobs/${j.id}`}>
-            <Card className="overflow-hidden transition hover:border-ink-500">
+          <Card key={j.id} className="overflow-hidden transition hover:border-ink-500">
+            <Link to={`/jobs/${j.id}`} className="block">
               <div className="aspect-[9/16] bg-ink-900">
                 {posterOf(j) && <img src={posterOf(j)} alt="" className="h-full w-full object-cover" />}
               </div>
-              <div className="flex items-center justify-between gap-2 p-3">
+              <div className="flex items-center justify-between gap-2 p-3 pb-2">
                 <span className="truncate text-sm font-medium">{j.title}</span>
                 {j.state === "done" ? <Pill tone="ok">Ready</Pill>
                   : j.state === "failed" ? <Pill tone="bad">Failed</Pill>
@@ -36,8 +38,11 @@ export function LibraryPage() {
                   : j.state === "awaiting_approval" ? <Pill tone="warn">Needs approval</Pill>
                   : <Pill tone="accent">Rendering</Pill>}
               </div>
-            </Card>
-          </Link>
+            </Link>
+            {FINISHED.has(j.state) && (  // the same clip, people, pictures and settings, ready to change
+              <Link to={`/create?from=${j.id}`} className="mx-3 mb-3 block text-xs text-accent hover:underline">Recreate</Link>
+            )}
+          </Card>
         ))}
       </div>
     </div>

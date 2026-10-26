@@ -205,6 +205,13 @@ def _plan(p: dict, usable: float) -> list[int]:
     return engine.lengths_for(frames)
 
 
+def _charge(p: dict, usable: float) -> dict:
+    """What a job delivers and costs: the seconds its chunks cover (a last chunk that would add under
+    graph.MIN_NEW frames is left out, and Restyle stops at its last chunk), charged as whole seconds."""
+    seconds = _covered(p, _plan(p, usable)) / FPS
+    return {"seconds": round(seconds, 2), "credits": max(1, round(seconds))}
+
+
 def _covered(p: dict, lengths: list[int]) -> int:
     engine = _engine(p)
     return graph.covered(lengths, chunk=engine.CHUNK, overlap=engine.OVERLAP)
@@ -1720,6 +1727,15 @@ def _recreate(params: dict, ids: dict[str, str]) -> dict:
     return {"params": p, "uploads": uploads, "people": people, "preset": preset}
 
 
+@app.get("/api/plan")
+def plan(mode: str, length: float, usable: float) -> dict:
+    """The seconds a job of this length would deliver and the credits it costs, for the page to show before it
+    is made (create_job charges exactly this)."""
+    if mode not in MODE_NAMES or not SHORTEST <= length <= LONGEST or usable <= 0:
+        raise UserError("Unknown mode or length.")
+    return _charge({"mode": mode, "motion": {"length": length}}, usable)
+
+
 @app.post("/api/jobs/{jid}/recreate")
 def recreate_job(jid: str) -> dict:
     """Start a new job from one of the visitor's own: the same clip, people, pictures and settings."""
@@ -2084,7 +2100,7 @@ def create_job(params: dict) -> dict:
     _job_dir(jid).mkdir(parents=True)
     j = {"id": jid, "created_at": datetime.now(timezone.utc).isoformat(), "state": "draft",
          "title": _title(params), "params": params,
-         "cost_seconds": max(1, round(_covered(params, _plan(params, usable)) / FPS)),
+         "cost_seconds": _charge(params, usable)["credits"],
          "auto": auto,  # straight to the video: no draft to approve, credits held from the start
          "_owner": _OWNER.get() or LOCAL}
     with LOCK:

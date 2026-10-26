@@ -158,6 +158,7 @@ export const mockApi: Api = {
     return u;
   },
   async styles() { return STYLES; },
+  async plan(_mode, length) { return { seconds: length + 0.06, credits: length }; },
   async gallery(): Promise<GalleryItem[]> { return []; },
   async recreateJob(jid) {
     const j = jobs.get(jid);

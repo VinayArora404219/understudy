@@ -9,6 +9,20 @@ import { aspectOf, Button, Card, CheckList, cx, Pill, SectionTitle, Spinner } fr
 
 type Step = "motion" | "change" | "preview";
 const SHORTEST = 2, LONGEST = 20; // seconds; the server holds the same bounds
+const RESTYLE_LONGEST = 18; // Restyle's four chunks at most cover 18.56 s (recast/vace.py MAX_CHUNKS)
+/** The longest a clip can be used for in a mode. */
+const longestFor = (mode: Mode, clip?: number) =>
+  Math.min(mode === "restyle" ? RESTYLE_LONGEST : LONGEST, Math.floor(clip ?? LONGEST));
+/** What the video will really be and cost, from the server's own plan: a last part that would add under
+ *  0.75 s is left out, so a few lengths come out a little short (10 s is 9.8 s), charged as whole seconds. */
+function usePlan(mode: Mode, motion: Motion) {
+  const clip = motion.upload?.info.seconds ?? motion.preset?.seconds;
+  const length = Math.min(motion.length, longestFor(mode, clip));
+  const usable = clip ? clip - motion.start : length;
+  const q = useQuery({ queryKey: ["plan", mode, length, usable.toFixed(2)], queryFn: () => api.plan(mode, length, usable),
+    staleTime: Infinity, placeholderData: (prev) => prev });
+  return { length, seconds: q.data?.seconds ?? length, credits: q.data?.credits ?? length };
+}
 /** Three separate jobs, as a visitor thinks of them. Each step 2 asks only its own question. */
 const MODES: [Mode, string, string][] = [
   ["recast", "Recast", "Someone else performs your moves: a person, a mascot, an animal."],
@@ -136,6 +150,7 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
   // Recast and Restage change chosen people, so someone must be chosen; Restyle redraws everyone
   const lookForPeople = !!motion.upload && !blocked && mode !== "restyle";
   const canGo = ready && (mode === "restyle" || !motion.upload || motion.picks.length > 0);
+  const plan = usePlan(mode, motion);
 
   return (
     <section>
@@ -207,7 +222,7 @@ function MotionStep({ mode, setMode, motion, setMotion, onNext }: {
       )}
 
       {ready && clipSeconds > SHORTEST && (
-        <LengthPick value={motion.length} longest={Math.min(LONGEST, Math.floor(clipSeconds))}
+        <LengthPick value={motion.length} longest={longestFor(mode, clipSeconds)} plan={plan}
           onChange={(l) => setMotion({ ...motion, length: l })} />
       )}
 
@@ -323,8 +338,8 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
   const style = mode === "swap" ? undefined : change.style;
   const characters = mode === "recast" ? filled : [];
   // Over 5 s, a draft can come first; shorter, the video is made straight away (its draft would be all of it)
-  const clip = motion.upload?.info.seconds ?? motion.preset?.seconds;
-  const cost = clip ? Math.min(motion.length, Math.floor(clip)) : motion.length;
+  const plan = usePlan(mode, motion);
+  const cost = plan.credits;
   const longer = cost > 5;
   const draft = longer && change.draft;
   const clipPlace = mode !== "restyle" && place.mode === "keep"; // its draft is the video's real first 5 s
@@ -356,7 +371,7 @@ function ChangeStep({ mode, change, setChange, motion, onBack, onPreview }: {
       const refs: CharacterRef[] = characters.map((c) => ({ upload_id: c.upload.id, text: c.text, keep_outfit: false }));
       const params: JobParams = {
         mode,
-        motion: { upload_id: motion.upload?.id, preset_id: motion.upload ? undefined : motion.preset?.id, start: motion.start, length: motion.length,
+        motion: { upload_id: motion.upload?.id, preset_id: motion.upload ? undefined : motion.preset?.id, start: motion.start, length: plan.length,
           picks: mode !== "restyle" && motion.picks.length ? motion.picks : undefined },
         performers,
         subject: "person", // Restage's items need a person; with picks the server reads person or animal from the clip
@@ -721,8 +736,7 @@ function Summary({ mode, motion, change, creditsLeft }: { mode: Mode; motion: Mo
     r.push(["Quality", change.finish === "480p" ? "Native" : `${change.finish} (upscaled)`]);
     return r;
   }, [mode, motion, change, styles.data]);
-  const clip = motion.upload?.info.seconds ?? motion.preset?.seconds;
-  const cost = clip ? Math.min(motion.length, Math.floor(clip)) : motion.length; // the server charges what it delivers
+  const cost = usePlan(mode, motion).credits; // the server charges what it delivers
   return (
     <aside className="lg:sticky lg:top-24 lg:self-start">
       <Card className="p-5">
@@ -905,13 +919,17 @@ function TextField({ label, value, onChange, placeholder, help, busy }: {
 
 /** Seconds of the clip to use, one credit each. Only what is asked is rendered: the last chunk is as short as it
  *  needs to be. */
-function LengthPick({ value, longest, onChange }: { value: number; longest: number; onChange: (s: number) => void }) {
+function LengthPick({ value, longest, plan, onChange }: {
+  value: number; longest: number; plan: { seconds: number; credits: number }; onChange: (s: number) => void;
+}) {
   const v = Math.min(value, longest);
+  const short = plan.seconds < v - 0.1; // this length's last part is left out: say what it really is
   return (
     <div className="mt-6">
       <div className="mb-2 flex items-baseline justify-between text-sm">
         <span className="text-ink-300">How much of the clip to use</span>
-        <span className="tabular-nums text-ink-100">{v} s <span className="text-ink-500">· {v} credit{v === 1 ? "" : "s"}</span></span>
+        <span className="tabular-nums text-ink-100">{short ? `${plan.seconds.toFixed(1)} s` : `${v} s`}
+          <span className="text-ink-500"> · {plan.credits} credit{plan.credits === 1 ? "" : "s"}</span></span>
       </div>
       <input type="range" min={SHORTEST} max={longest} step={1} value={v} onChange={(e) => onChange(Number(e.target.value))}
         className="w-full accent-[var(--color-accent)]" aria-label="Seconds of the clip to use" />

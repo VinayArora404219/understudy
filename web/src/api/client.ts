@@ -1,4 +1,4 @@
-import type { GalleryItem, ImageRole, Job, JobParams, MotionPreset, Recreate, Session, Style, Upload } from "./types";
+import type { GalleryItem, ImageRole, Job, JobParams, Mode, MotionPreset, Recreate, Session, Style, Upload } from "./types";
 
 export interface Api {
   readonly isMock: boolean;
@@ -9,6 +9,8 @@ export interface Api {
   /** A ready-made motion, as the visitor's own upload: the rest of the flow is the same as for their clip. */
   usePreset(id: string): Promise<Upload>;
   styles(): Promise<Style[]>;
+  /** What a job of this length would deliver and cost (the server charges exactly this). */
+  plan(mode: Mode, length: number, usable: number): Promise<{ seconds: number; credits: number }>;
   gallery(): Promise<GalleryItem[]>;
   /** Start again from one of the visitor's renders, or from an example (its uploads become theirs). */
   recreateJob(jobId: string): Promise<Recreate>;
@@ -61,6 +63,7 @@ const live: Api = {
   presets: () => call("/presets"),
   usePreset: (id) => call(`/presets/${id}/use`, { method: "POST" }),
   styles: () => call("/styles"),
+  plan: (mode, length, usable) => call(`/plan?mode=${mode}&length=${length}&usable=${usable.toFixed(2)}`),
   gallery: () => call("/gallery"),
   recreateJob: (id) => call(`/jobs/${id}/recreate`, { method: "POST" }),
   recreateExample: (id) => call(`/gallery/${id}/recreate`, { method: "POST" }),

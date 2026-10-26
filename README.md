@@ -112,6 +112,14 @@ and its preview takes about as long, since it is that render.
   lanczos upscale, and the result page says so. Fast hands smear.
 - One character's likeness drifts younger in some runs. Logos and printed text on clothes turn into invented
   text. Small accessories from a reference photo (glasses) appear in some renders and not others.
+- A performer keeps their own build and way of moving; only how they look changes. A dog recast as a cat
+  came out a dog-shaped cat (a dog's size, legs and gait), so pick a character with a similar body. People
+  can play animals that stand or sit upright, and the other way round (two animals at a keyboard were
+  recast as two men, in either order). In one test a person could not be put on a dog standing on four
+  legs: the model drew the person on the human performer instead, whatever the reference said.
+- Restyle changes places more than people: in Pixel Art and Watercolor the background takes the look while
+  a performer stays close to filmed. Over a 10 s Restyle, details are redrawn as it goes (a dog's coat
+  gained spots, trousers changed colour); the joins themselves show no jump.
 - In the clip's place the room is the model's own, graded to the clip's colours as a whole (bench/RESULTS.md).
 - Jobs on the same lane queue: two visitors rendering at once wait for each other.
 - Four chunks at most: a 20 s ask delivers about 19.3 s in Recast and Restage and 18.6 s in Restyle, and is

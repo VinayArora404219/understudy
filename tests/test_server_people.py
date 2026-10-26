@@ -56,6 +56,20 @@ def test_a_ready_made_motion_is_used_as_the_visitors_copy(app):
     assert TestClient(app.app).post("/api/jobs", json=p).status_code == 400
 
 
+def test_the_page_is_told_exactly_what_a_job_costs(app):
+    """10 s delivers 9.56 s in Restyle (a last part under 0.75 s is left out): the plan the page shows and the
+    credits a job is charged are the same numbers."""
+    c = TestClient(app.app)
+    for mode, length in (("restyle", 10), ("restyle", 5), ("recast", 10)):
+        plan = c.get("/api/plan", params={"mode": mode, "length": length, "usable": 10}).json()
+        p = _params([1], mode="restyle", characters=[], style="anime") if mode == "restyle" else _params([1])
+        p["motion"]["length"] = length
+        app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": [{"id": 1}]}}
+        job = c.post("/api/jobs", json=p).json()
+        assert job["cost_seconds"] == plan["credits"], (mode, length, plan)
+    assert c.get("/api/plan", params={"mode": "restyle", "length": 10, "usable": 10}).json() == {"seconds": 9.56, "credits": 10}
+
+
 def test_two_people_at_most_can_be_chosen(app):
     """With four chosen, one half behind a kept person bled into them; two leaves SCAIL room for neighbours."""
     app.UPLOADS["up_clip"]["people"] = {"0.00_portrait": {"state": "ready", "people": [{"id": i} for i in (1, 2, 3)]}}
@@ -325,3 +339,4 @@ def test_only_a_bust_for_a_performer_showing_more_body_gets_its_body_drawn(app, 
     assert app._needs_body(c, tall, frame) and not app._needs_body(c, (0.1, 0.5, 0.8, 0.5), frame)
     lengths.update(photo=None, clip=6.0)  # a drawing: left as it is
     assert not app._needs_body(c, square, frame)
+
