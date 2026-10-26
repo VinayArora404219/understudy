@@ -70,7 +70,7 @@
     "base_rs",
     0
    ],
-   "prompt": "Redraw the whole picture as a hand-drawn anime cel frame: clean ink outlines, flat cel shading, painted background. Same pose, same camera and framing as the first picture."
+   "prompt": "Redraw the whole picture as a hand-drawn anime cel frame: clean ink outlines, flat cel shading, the place kept as it is and drawn in the same style. Same pose, same camera and framing as the first picture."
   }
  },
  "neg": {
