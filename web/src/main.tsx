@@ -11,27 +11,31 @@ import { JobPage } from "./pages/JobPage";
 import { JudgeEntryPage } from "./pages/JudgeEntryPage";
 import { LandingPage } from "./pages/LandingPage";
 import { LibraryPage } from "./pages/LibraryPage";
-import { NotFoundPage, PrivacyPage } from "./pages/StaticPages";
+import { NotFoundPage, PrivacyPage, RouteError } from "./pages/StaticPages";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
 });
 
 const router = createBrowserRouter([
-  { path: "/j/:token", element: <JudgeEntryPage /> },
-  { path: "/welcome", element: <JudgeEntryPage /> },
-  { path: "/admin", element: <AdminPage /> },
+  { path: "/j/:token", element: <JudgeEntryPage />, errorElement: <RouteError /> },
+  { path: "/welcome", element: <JudgeEntryPage />, errorElement: <RouteError /> },
+  { path: "/admin", element: <AdminPage />, errorElement: <RouteError /> },
   {
     element: <AppShell />,
-    children: [
-      { path: "/", element: <LandingPage /> },
-      { path: "/create", element: <CreatePage /> },
-      { path: "/examples", element: <ExamplesPage /> },
-      { path: "/jobs/:id", element: <JobPage /> },
-      { path: "/library", element: <LibraryPage /> },
-      { path: "/privacy", element: <PrivacyPage /> },
-      { path: "*", element: <NotFoundPage /> },
-    ],
+    errorElement: <RouteError />,
+    children: [{
+      errorElement: <RouteError />,  // a page that fails to draw keeps the header around it
+      children: [
+        { path: "/", element: <LandingPage /> },
+        { path: "/create", element: <CreatePage /> },
+        { path: "/examples", element: <ExamplesPage /> },
+        { path: "/jobs/:id", element: <JobPage /> },
+        { path: "/library", element: <LibraryPage /> },
+        { path: "/privacy", element: <PrivacyPage /> },
+        { path: "*", element: <NotFoundPage /> },
+      ],
+    }],
   },
 ]);
 

@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useRouteError } from "react-router-dom";
 import { Empty } from "./JobPage";
 
 export function PrivacyPage() {
@@ -13,6 +13,19 @@ export function PrivacyPage() {
       <p>Only upload people who have agreed to be transformed. Results are labelled as AI-generated.</p>
     </article>
   );
+}
+
+/** What a page that failed to draw shows instead of the router's bare error screen: a way back, never a dead end.
+ *  The error itself goes to the console, where a bug report can quote it. */
+export function RouteError() {
+  const error = useRouteError();
+  console.error(error);
+  return <Empty title="Something went wrong on this page" line="Nothing you made is lost. Reload, or go back to your renders."
+    action={<div className="flex justify-center gap-3">
+      <button onClick={() => window.location.reload()}
+        className="inline-flex h-10 items-center rounded-[var(--radius-control)] bg-accent px-4 text-sm font-medium text-accent-ink">Reload</button>
+      <a href="/library" className="inline-flex h-10 items-center rounded-[var(--radius-control)] border border-ink-700 bg-ink-800 px-4 text-sm">My renders</a>
+    </div>} />;
 }
 
 export function NotFoundPage() {
