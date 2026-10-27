@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from recast import media  # noqa: E402
 
 PRESETS = [  # id (file name), title, subtitle, credit: the Pexels creator
+    ("dance_trio", "Dance trio", "Three dancers, far apart, music", "Yan Krukau / Pexels"),
     ("dance_duo_studio", "Studio duo", "Two dancers, white studio, music", "Polina Tankilevitch / Pexels"),
     ("dance_breaking", "Breaking", "Floor work and legs overhead, music", "Allan Mas / Pexels"),
     ("dance_ballet_balcony", "Balcony kicks", "High kicks on a narrow balcony, music", "Los Muertos Crew / Pexels"),
