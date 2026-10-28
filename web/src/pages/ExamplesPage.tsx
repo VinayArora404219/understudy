@@ -39,7 +39,10 @@ export function ExamplesPage() {
           <Card key={x.id} className="flex flex-col overflow-hidden">
             <button onClick={() => show(x.id)} className="group relative block aspect-[4/5] overflow-hidden bg-ink-900"
               aria-label={`Watch ${x.title}`}>
-              <img src={x.poster_url} alt="" loading="lazy" className="h-full w-full object-cover transition group-hover:scale-[1.02]" />
+              {x.aspect && x.aspect[0] > x.aspect[1] ? <>{/* a wide video: the whole frame, its own colours behind it */}
+                <img src={x.poster_url} alt="" aria-hidden className="absolute inset-0 h-full w-full scale-110 object-cover opacity-40 blur-2xl" />
+                <img src={x.poster_url} alt="" loading="lazy" className="relative h-full w-full object-contain transition group-hover:scale-[1.02]" />
+              </> : <img src={x.poster_url} alt="" loading="lazy" className="h-full w-full object-cover transition group-hover:scale-[1.02]" />}
               <span className="absolute left-3 top-3 rounded-full bg-ink-950/80 backdrop-blur"><Pill tone="accent">{x.mode}</Pill></span>
               <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-4 text-left text-sm text-ink-100">
                 ▶ Watch before and after{x.seconds ? ` · ${x.seconds} s` : ""}
