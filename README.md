@@ -105,8 +105,9 @@ tools/serve_local.sh          # backend on :8780, web app on http://localhost:51
 ```
 
 A fresh checkout has no example clips or Examples: the clips are third-party videos and are not in git. Upload
-your own clip to start. With clips in `examples/clips/`, `tools/add_presets.py` lists them under "Use one of
-ours", and `tools/add_gallery.py <spec.json>` turns finished jobs into Examples to watch and recreate (copy
+your own clip to start, or run `python3 tools/fetch_examples.py` to rebuild the six example clips from Pexels
+(the music is a by-hand download, see [examples/README.md](examples/README.md)). Then `tools/add_presets.py`
+lists them under "Use one of ours", and `tools/add_gallery.py <spec.json>` turns finished jobs into Examples to watch and recreate (copy
 `runs/app/gallery/` into another server's data folder to show them there).
 
 The `recast` CLI (`recast run`, `recast match`, `recast styles`) is the first version of the pipeline, on Wan
