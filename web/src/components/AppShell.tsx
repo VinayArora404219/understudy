@@ -9,7 +9,9 @@ export function AppShell() {
   const { pathname } = useLocation();
   // a new page starts at its top: the job page used to open as far down as the create form had been scrolled,
   // with its start picture above the screen and an empty column in view
-  useEffect(() => window.scrollTo(0, 0), [pathname]);
+  // (braces: newer mobile Chrome's scrollTo returns a Promise, and React calls an effect's return value on
+  // cleanup, so returning it crashed every page change on phones)
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
   // without a judge link only the landing page and the privacy page are open (server/links.py)
   const locked = session?.kind === "guest" && !["/", "/privacy"].includes(pathname);
   return (
