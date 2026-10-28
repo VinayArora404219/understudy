@@ -76,13 +76,15 @@ function InProgress({ job }: { job: Job }) {
   const start = sheet ? job.preview?.frame_url : job.preview?.reference_url ?? job.preview?.frame_url;
   // before the server has a picture (the first seconds after submitting), the clip itself, never a black box
   const clip = job.inputs?.find((i) => i.kind === "video")?.thumb_url;
+  const fill = job.aspect ? "h-full w-full object-cover" : "block h-auto w-full";
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,380px)_1fr]">
-      <div className="relative self-start overflow-hidden rounded-[var(--radius-card)] border border-ink-700" style={aspectOf(job.aspect)}>
+      {/* in the video's shape once it is known; before that the picture's own shape, never a crop of its middle */}
+      <div className="relative self-start overflow-hidden rounded-[var(--radius-card)] border border-ink-700" style={job.aspect ? aspectOf(job.aspect) : undefined}>
         {job.preview?.first_url
-          ? <video src={job.preview.first_url} poster={job.preview.first_frame_url} autoPlay loop muted playsInline aria-label="The start of your video" className="h-full w-full object-cover opacity-60" />
-          : start ? <img src={start} alt={sheet ? "Who you chose, in your first frame" : "Starting frame"} className="h-full w-full object-cover opacity-60" />
-          : clip && <img src={clip} alt="Your clip" className="h-full w-full object-cover opacity-60" />}
+          ? <video src={job.preview.first_url} poster={job.preview.first_frame_url} autoPlay loop muted playsInline aria-label="The start of your video" className={cx(fill, "opacity-60")} />
+          : start ? <img src={start} alt={sheet ? "Who you chose, in your first frame" : "Starting frame"} className={cx(fill, "opacity-60")} />
+          : clip && <img src={clip} alt="Your clip" className={cx(fill, "opacity-60")} />}
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-5 text-sm">
           {job.preview?.first_url || (start && !sheet && start === job.preview?.reference_url)
             ? "This is where your video starts." : start ? "Who you chose, in your first frame." : "Your clip."}</div>
@@ -191,7 +193,8 @@ function Result({ job }: { job: Job }) {
   const poster = job.preview?.first_frame_url ?? job.preview?.reference_url;
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
-      <div className="relative overflow-hidden rounded-[var(--radius-card)] border border-ink-700 bg-ink-950 p-4 sm:p-6">
+      {/* only as tall as the player, and it stays in view while the details beside it scroll */}
+      <div className="relative self-start overflow-hidden rounded-[var(--radius-card)] border border-ink-700 bg-ink-950 p-4 sm:p-6 lg:sticky lg:top-20">
         {poster && (  // the video's own colours behind it, instead of empty bars
           <img src={poster} alt="" aria-hidden
             className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-40 blur-3xl" />

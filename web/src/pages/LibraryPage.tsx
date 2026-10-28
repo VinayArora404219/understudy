@@ -27,8 +27,11 @@ export function LibraryPage() {
         {list.map((j) => (
           <Card key={j.id} className="overflow-hidden transition hover:border-ink-500">
             <Link to={`/jobs/${j.id}`} className="block">
-              <div className="aspect-[9/16] bg-ink-900">
-                {posterOf(j) && <img src={posterOf(j)} alt="" className="h-full w-full object-cover" />}
+              <div className="relative aspect-[9/16] overflow-hidden bg-ink-900">
+                {posterOf(j) && <>{/* the whole frame, never a crop of its middle; its own colours fill the rest */}
+                  <img src={posterOf(j)} alt="" aria-hidden className="absolute inset-0 h-full w-full scale-110 object-cover opacity-40 blur-2xl" />
+                  <img src={posterOf(j)} alt="" className="relative h-full w-full object-contain" />
+                </>}
               </div>
               <div className="flex items-center justify-between gap-2 p-3 pb-2">
                 <span className="truncate text-sm font-medium">{j.title}</span>
