@@ -1,7 +1,7 @@
 [project]
 name = "performance-recast"
 version = "0.1.0"
-description = "Recast a performance onto any character with open-weight Wan Animate-2, run through the Comfy SDK."
+description = "Recast, restyle or restage a filmed performance with open-weight models, run through the Comfy SDK."
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [

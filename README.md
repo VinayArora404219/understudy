@@ -77,22 +77,37 @@ Only a hash of each link is stored, so a link is shown once, when it is made.
 
 ## Run it yourself
 
-You need a ComfyUI (v0.41.3) with the models in [manifests/models.json](manifests/models.json) (pinned Hugging
-Face revisions, sizes and SHA-256 hashes) and the three custom node packs listed there, plus `comfy-api-proxy`
-next to it.
+The app itself needs Python 3.10+, Node 20+ and `ffmpeg` on the PATH. It renders on a ComfyUI v0.41.3 with
+the models in [manifests/models.json](manifests/models.json) (pinned Hugging Face revisions, sizes and SHA-256
+hashes) and three custom node packs, behind `comfy-api-proxy` 0.1.6. There are two ways to get one.
+
+**On Modal, with no GPU of your own.** [deploy/modal/](deploy/modal/README.md) builds ComfyUI, the node packs
+and the proxy into an image, downloads the models into a Volume, and publishes two HTTPS endpoints. This is
+how the judge build runs. GPU time is billed to your Modal account.
+
+**On your own ComfyUI** (measured on a 16 GB card):
 
 ```bash
-uv venv && uv pip install -e ".[dev]"
-(cd web && npm install)
-cp .env.example .env          # set COMFY_BASE_URL to your comfy-api-proxy
-tools/serve_local.sh          # backend on :8780, web app on http://localhost:5180
-python3 tools/add_presets.py   # optional: the example clips as ready-made motions ("Use one of ours")
-python3 tools/add_gallery.py spec.json  # optional: finished jobs as Examples to watch and recreate
+python3 tools/fetch_models.py /path/to/ComfyUI   # about 63 GiB, every file hash-checked, plus the 3 node packs
+# then install each new pack's requirements.txt into ComfyUI's Python, restart ComfyUI, and start the proxy:
+pip install comfy-api-proxy==0.1.6
+comfy-api-proxy run --comfyui http://127.0.0.1:8188 --host 127.0.0.1 --port 8189 --state-dir ./proxy-state
 ```
 
-`add_gallery.py` copies finished jobs from this server's data into `gallery/` (each with its videos, recipe and
-the uploads behind it) and one start picture per look for the style cards. To show them on another server, copy
-`runs/app/gallery/` into that server's data folder.
+**Then the app**, the same for both:
+
+```bash
+uv venv && uv pip install -e ".[dev,server]"
+(cd web && npm install)
+cp .env.example .env          # COMFY_BASE_URL: your proxy, or the Modal endpoints and COMFY_API_KEY
+tools/serve_local.sh          # backend on :8780, web app on http://localhost:5180
+.venv/bin/python -m pytest -q # CPU-only tests, no GPU needed
+```
+
+A fresh checkout has no example clips or Examples: the clips are third-party videos and are not in git. Upload
+your own clip to start. With clips in `examples/clips/`, `tools/add_presets.py` lists them under "Use one of
+ours", and `tools/add_gallery.py <spec.json>` turns finished jobs into Examples to watch and recreate (copy
+`runs/app/gallery/` into another server's data folder to show them there).
 
 The `recast` CLI (`recast run`, `recast match`, `recast styles`) is the first version of the pipeline, on Wan
 Animate-2, kept for comparison. `--dry-run` writes its graphs without a GPU.
@@ -104,7 +119,7 @@ and its preview takes about as long, since it is that render.
 
 - Up to two performers. With four chosen, one standing half behind a person kept as filmed bled into them
   (a beard showing through a cheek); with two, SCAIL-2's other two places go to neighbours who touch the
-  chosen ones, which kept the office clip clean. A new place starts from one image edit, which holds two
+  chosen ones, which keeps them from being redrawn. A new place starts from one image edit, which holds two
   people. Anyone hidden behind another person in the start frame isn't found, so they can't be chosen.
   People in clear view work best.
 - Native size: 576x1024 for tall clips and 1024x576 for wide ones; 3:4, 4:3 and square at about 480p, and
