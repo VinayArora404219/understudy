@@ -22,7 +22,6 @@ PRESETS = [  # id (file name), title, subtitle, credit: the Pexels creator
     ("dance_breaking", "Breaking", "Floor work and legs overhead, music", "Allan Mas / Pexels"),
     ("dance_ballet_balcony", "Balcony kicks", "High kicks on a narrow balcony, music", "Los Muertos Crew / Pexels"),
     ("dance_man_and_dog", "Man and dog", "A man and his dog dance together, music", "K / Pexels"),
-    ("group_office", "Office chat", "Six coworkers talking, room sound", "Diva Plavalaguna / Pexels"),
     ("street_sunglasses", "Sunglasses off", "She takes her sunglasses off in the street", "Connor Scott McManus / Pexels"),
 ]
 
