@@ -163,14 +163,20 @@ def normalize(src: str | Path, dst: str | Path, *, layout: str, seconds: float |
     w, h = graph.SIZES[layout]
     vf = (f"{_crop(box)}fps={fps},scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
           f"crop={w}:{h},setsar=1")
+    # The graph needs exactly round(seconds * fps) frames. A duration alone doesn't guarantee that: ffmpeg 7.1
+    # cut a 23.976 fps clip to 80 frames where 81 were asked (4.4 gave 81), and the render failed on 81 vs 80.
+    # So read a little past the end, repeat the last frame if the source runs short, and stop at the count.
+    frames = round(seconds * fps) if seconds is not None else None
+    if frames is not None:
+        vf += f",tpad=stop_mode=clone:stop_duration={2 / fps:.4f}"
     args = [FFMPEG, "-y", "-v", "error", "-ss", f"{start:.3f}", "-i", str(src)]
     # Every normalized clip carries an audio track: the video loader on the GPU side fails on a
     # clip with none (measured on a silent stock clip). Silent sources get digital silence.
     silent = not probe(src).has_audio
     if silent:
         args += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
-    if seconds is not None:
-        args += ["-t", f"{seconds:.3f}"]
+    if frames is not None:
+        args += ["-t", f"{seconds + 2 / fps:.3f}", "-frames:v", str(frames)]
     args += ["-vf", vf, "-map", "0:v:0", "-map", "1:a:0" if silent else "0:a:0", "-c:v", "libx264",
              "-crf", "16", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
              "-ar", "48000", "-shortest", "-map_metadata", "-1", "-movflags", "+faststart", str(dst)]

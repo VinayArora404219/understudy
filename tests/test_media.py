@@ -136,3 +136,18 @@ def test_moments_sheet_is_four_frames_in_a_grid(tmp_path):
     info = media.probe(media.moments_sheet(clip, tmp_path / "m.png", height=100))
     assert info.height == 200 and info.width == 2 * (round(160 * 100 / 284) // 2 * 2)
 
+
+
+@pytest.mark.parametrize("fps", ["24000/1001", "25", "30"])
+@pytest.mark.parametrize("frames", [81, 161])
+def test_normalize_gives_exactly_the_frames_asked(tmp_path, fps, frames):
+    # The graph needs 1 + 4n frames exactly. ffmpeg 7.1 cut a 23.976 fps clip to 80 where 81 were asked
+    # (a duration alone), and the render failed on 81 vs 80; a frame count can't come out short.
+    rate = eval(fps)  # noqa: S307 - a literal from this test
+    src = _clip(tmp_path / "in.mp4", seconds=frames / 16 + 1.0, fps=rate)
+    out = media.normalize(src, tmp_path / "n.mp4", layout="portrait", seconds=frames / 16)
+    n = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                        "stream=nb_read_frames", "-of", "csv=p=0", str(tmp_path / "n.mp4")],
+                       capture_output=True, text=True, check=True).stdout.strip()
+    assert int(n) == frames
+    assert out.has_audio
