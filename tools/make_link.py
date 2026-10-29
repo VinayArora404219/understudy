@@ -2,7 +2,7 @@
 
     python3 tools/make_link.py "Judge 1" --credits 300 --days 40 [--base https://your.domain]
     python3 tools/make_link.py --list
-    python3 tools/make_link.py --revoke ln_1a2b3c4d
+    python3 tools/make_link.py --revoke <link id>
 
 Writes RECAST_DATA/links.json (default runs/app), which the running server re-reads by itself. The same can be
 done in the browser at /admin when RECAST_ADMIN_PASSWORD is set.

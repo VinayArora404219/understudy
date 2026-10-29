@@ -25,7 +25,7 @@ function usePlan(mode: Mode, motion: Motion) {
 }
 /** Three separate jobs, as a visitor thinks of them. Each step 2 asks only its own question. */
 const MODES: [Mode, string, string][] = [
-  ["recast", "Recast", "Someone else performs your moves: a person, a mascot, an animal."],
+  ["recast", "Recast", "Someone else performs your moves, from one character photo."],
   ["restyle", "Restyle", "Your video, redrawn in a look: anime, toy, pixel art and more."],
   ["swap", "Restage", "You stay you. New clothes, a new place, or both."],
 ];

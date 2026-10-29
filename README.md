@@ -23,18 +23,16 @@ audio, a side-by-side comparison and a `recipe.json` with the exact graph that m
 1. **You tap who changes.** SAM 3.1 finds everyone in the first frame; the people you tap start the video
    tracker, with no words involved. Everyone you didn't tap is tracked through the whole clip and put back as
    filmed, so a recast never leaks onto a bystander.
-2. **Animals can perform too.** SCAIL-2 follows a tracked mask, not a skeleton, so a dog and a cat at a
-   keyboard can be recast as two men, each in their own animal's place and pose.
-3. **The preview is the real start of the video.** It renders the video's first 5 seconds with the same graph
+2. **The preview is the real start of the video.** It renders the video's first 5 seconds with the same graph
    and seed, so a 5 s video costs no second render.
-4. **Every result can be made again.** `recipe.json` holds the exact ComfyUI API graph, seed, settings and input
+3. **Every result can be made again.** `recipe.json` holds the exact ComfyUI API graph, seed, settings and input
    hashes, and Recreate opens it in the app, ready to change.
 
 ## Three modes
 
 | Mode | What changes | How |
 |---|---|---|
-| **Recast** | Someone else performs your moves: a person, a mascot, an animal. Up to two performers, in the clip's own place or another one. | SCAIL-2 (Wan2.1 14B), tracked by SAM 3.1. Another place starts from a picture made with Qwen-Image-Edit-2511. |
+| **Recast** | Someone else performs your moves, from one character photo. Up to two performers, in the clip's own place or another one. | SCAIL-2 (Wan2.1 14B), tracked by SAM 3.1. Another place starts from a picture made with Qwen-Image-Edit-2511. |
 | **Restyle** | The whole video, redrawn in a look: anime, toy, pixel art, comic ink and more. | Wan2.1 VACE 14B, video to video on a depth map of every frame, so things that happen later in the clip still happen. |
 | **Restage** | You stay you. New clothes for anyone you choose, a new place, or both. | SCAIL-2 recasts you as yourself, so the clip still drives every frame. Each new outfit is put on with Qwen-Image-Edit-2511 first. |
 
@@ -133,8 +131,10 @@ lists them under "Use one of ours", and `tools/add_gallery.py <spec.json>` turns
 The `recast` CLI (`recast run`, `recast match`, `recast styles`) is the first version of the pipeline, on Wan
 Animate-2, kept for comparison. `--dry-run` writes its graphs without a GPU.
 
-Measured on a 16 GB RTX 4070 Ti SUPER, which offloads part of the 14B models: a 5 s Recast takes about 6 minutes,
-and its preview takes about as long, since it is that render.
+Measured render times for 5 s of video. On a 16 GB RTX 4070 Ti SUPER, which offloads part of the 14B models:
+Recast and Restage 10.5 to 15 minutes (20 runs), Restyle about 5 minutes (6 runs). On Modal's L40S lane: a
+Recast took 3.3 minutes and a Restyle 2.2 (one run each). The clip's-place preview takes as long as that render,
+since it is that render.
 
 ## Limits (honest list)
 
@@ -149,9 +149,8 @@ and its preview takes about as long, since it is that render.
 - One character's likeness drifts younger in some runs. Logos and printed text on clothes turn into invented
   text. Small accessories from a reference photo (glasses) appear in some renders and not others.
 - A performer keeps their own build and way of moving; only how they look changes. A dog recast as a cat
-  came out a dog-shaped cat (a dog's size, legs and gait), so pick a character with a similar body. People
-  can play animals that stand or sit upright, and the other way round (two animals at a keyboard were
-  recast as two men, in either order). In one test a person could not be put on a dog standing on four
+  came out a dog-shaped cat (a dog's size, legs and gait), so pick a character with a similar body. Two
+  animals at a keyboard were recast as two men, in either order. In one test a person could not be put on a dog standing on four
   legs: the model drew the person on the human performer instead, whatever the reference said. An animal's
   tail counts as part of its body: a cat recast as a woman in jeans grew a third leg where the tail was.
 - Restyle changes places more than people: in Pixel Art and Watercolor the background takes the look while
