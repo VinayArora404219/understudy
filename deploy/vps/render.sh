@@ -2,17 +2,21 @@
 # Render the edge vhost into $EDGE_DIR/edge/ and prove it is safe before the edge sees it.
 #
 #   EDGE_DIR=/srv/recast-edge RECAST_DOMAIN=recast.example.com deploy/vps/render.sh
+#   EDGE_DIR=/srv/recast-edge RECAST_DOMAIN="recast.example.com app.example.com" deploy/vps/render.sh  # several names
 #   ALLOW_FROM=cloudflare (default) | any
 #
 # Writes $EDGE_DIR/edge/{recast.conf,proxy.inc,tls/}. Refuses a vhost that could catch traffic
-# meant for another site on the same edge: a default_server, or any server_name except
+# meant for another site on the same edge: a default_server, or any server_name not listed in
 # RECAST_DOMAIN. Then runs `nginx -t` on it in a throwaway container.
 set -euo pipefail
 : "${EDGE_DIR:?set EDGE_DIR}"
 : "${RECAST_DOMAIN:?set RECAST_DOMAIN}"
 ALLOW_FROM="${ALLOW_FROM:-cloudflare}"
 here="$(cd "$(dirname "$0")" && pwd)"
-[[ "$RECAST_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$ ]] || { echo "bad RECAST_DOMAIN: $RECAST_DOMAIN" >&2; exit 1; }
+RECAST_DOMAIN="$(echo $RECAST_DOMAIN)"  # one space between names, none at the ends
+for d in $RECAST_DOMAIN; do
+  [[ "$d" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$ ]] || { echo "bad name in RECAST_DOMAIN: $d" >&2; exit 1; }
+done
 fail() { echo "render.sh: refusing: $*" >&2; exit 1; }
 
 stage="$(mktemp -d)"
@@ -35,14 +39,15 @@ envsubst '${RECAST_ALLOW}' < "$here/proxy.inc.in" > "$stage/proxy.inc"
 conf="$(grep -hv '^\s*#' "$stage/recast.conf" "$stage/proxy.inc")"
 echo "$conf" | grep -q 'default_server' && fail "default_server would capture other sites"
 names="$(grep -v '^\s*#' "$stage/recast.conf" | grep -E '^\s*server_name\s' | sed -E 's/^\s*server_name\s+//; s/;\s*$//' | tr ' ' '\n' | sort -u)"
-[ "$names" = "$RECAST_DOMAIN" ] || fail "server_name must be exactly $RECAST_DOMAIN, got: $(echo $names)"
+[ "$names" = "$(echo $RECAST_DOMAIN | tr ' ' '\n' | sort -u)" ] || fail "server_name must be exactly $RECAST_DOMAIN, got: $(echo $names)"
 echo "$conf" | grep -q '\${' && fail "unrendered placeholder left in the file"
 
 # The origin certificate: self-signed, kept across renders. Cloudflare Full mode accepts it.
 tls="$EDGE_DIR/edge/tls"
 if [ -f "$tls/fullchain.pem" ]; then cp "$tls"/*.pem "$stage/tls/"; else
-  openssl req -x509 -nodes -newkey rsa:2048 -days 3650 -subj "/CN=$RECAST_DOMAIN" \
-    -addext "subjectAltName=DNS:$RECAST_DOMAIN" \
+  first="${RECAST_DOMAIN%% *}"; san="$(echo $RECAST_DOMAIN | sed 's/[^ ]*/DNS:&/g; s/ /,/g')"
+  openssl req -x509 -nodes -newkey rsa:2048 -days 3650 -subj "/CN=$first" \
+    -addext "subjectAltName=$san" \
     -keyout "$stage/tls/privkey.pem" -out "$stage/tls/fullchain.pem" 2>/dev/null
 fi
 
