@@ -1,14 +1,34 @@
 # Understudy
 
+![Two of three dancers recast while the one between them stays as filmed; the divider sweeps from the filmed clip to the result](docs/media/hero.gif)
+
+*Two of three dancers recast as a woman in a yellow raincoat and a runner in teal. The dancer between them
+stays exactly as filmed. Real app output; the source is a licensed Pexels clip.*
+
 Film something. Choose who in the clip is recast, and as whom. Get the same performance back, played by
 your characters, in your own room, with everyone you didn't choose left exactly as filmed, your original
 audio, a side-by-side comparison and a `recipe.json` with the exact graph that made it.
 
-Open weights only, end to end, run through the official
-[Comfy SDK](https://docs.comfy.org/development/api-development/sdks) against a self-hosted ComfyUI behind
-[`comfy-api-proxy`](https://github.com/Comfy-Org/comfy-api-proxy). No closed model or API anywhere in the path.
+> **Entry for Comfy's #OpenSourceHiggsfield challenge, Open Weights Only.** No partner nodes, API nodes or
+> closed models anywhere in the path: every model is downloadable open weights, run through the official
+> [Comfy SDK](https://docs.comfy.org/development/api-development/sdks) against a self-hosted ComfyUI behind
+> [`comfy-api-proxy`](https://github.com/Comfy-Org/comfy-api-proxy).
 
-> Built for Comfy's *Open Source Higgsfield* challenge (Oct 2026), Open Weights category.
+**[What's new here](#whats-new-here)** · **[Run it yourself](#run-it-yourself)** · **[How it runs](#how-it-runs)**
+
+![Recast, Restyle and Restage results, each with the filmed frame inset](docs/media/modes.jpg)
+
+## What's new here
+
+1. **You tap who changes.** SAM 3.1 finds everyone in the first frame; the people you tap start the video
+   tracker, with no words involved. Everyone you didn't tap is tracked through the whole clip and put back as
+   filmed, so a recast never leaks onto a bystander.
+2. **People and animals, both ways.** SCAIL-2 follows a tracked mask, not a skeleton, so a person can play an
+   upright animal and an animal can play a person.
+3. **The preview is the real start of the video.** It renders the video's first 5 seconds with the same graph
+   and seed, so a 5 s video costs no second render.
+4. **Every result can be made again.** `recipe.json` holds the exact ComfyUI API graph, seed, settings and input
+   hashes, and Recreate opens it in the app, ready to change.
 
 ## Three modes
 
