@@ -1,4 +1,4 @@
-# Build context for deploy/vps: only code goes in, never media, runs or private notes.
+# Build context for the server images: only code goes in, never media, runs or private notes.
 .git
 .env
 private/
