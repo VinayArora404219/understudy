@@ -23,8 +23,8 @@ audio, a side-by-side comparison and a `recipe.json` with the exact graph that m
 1. **You tap who changes.** SAM 3.1 finds everyone in the first frame; the people you tap start the video
    tracker, with no words involved. Everyone you didn't tap is tracked through the whole clip and put back as
    filmed, so a recast never leaks onto a bystander.
-2. **People and animals, both ways.** SCAIL-2 follows a tracked mask, not a skeleton, so a person can play an
-   upright animal and an animal can play a person.
+2. **Animals can perform too.** SCAIL-2 follows a tracked mask, not a skeleton, so a dog and a cat at a
+   keyboard can be recast as two men, each in their own animal's place and pose.
 3. **The preview is the real start of the video.** It renders the video's first 5 seconds with the same graph
    and seed, so a 5 s video costs no second render.
 4. **Every result can be made again.** `recipe.json` holds the exact ComfyUI API graph, seed, settings and input
